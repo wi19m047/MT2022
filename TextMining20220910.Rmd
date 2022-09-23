@@ -1,0 +1,12 @@
+---
+title: "TextMining20220910"
+author: "wi19m047"
+date: "2022-09-10"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
