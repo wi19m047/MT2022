@@ -17,7 +17,7 @@ options(stringsAsFactors = F)
 Sys.setlocale("LC_ALL", "de_DE.UTF-8")
 ```
 
-# UC.00 prepare the environment
+# UC.00 
 ## libraries
 
 ```{r}
