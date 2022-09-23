@@ -1,0 +1,2157 @@
+---
+title: "TextMining"
+author: "wi19m047"
+date: "8/31/2022"
+output:
+  word_document: default
+  pdf_document:
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+options(stringsAsFactors = F)
+Sys.setlocale("LC_ALL", "de_DE.UTF-8")
+```
+
+# UC.00 prepare the environment
+## libraries
+
+```{r}
+library(tm)
+library(pdftools)
+library(NLP)
+library(ggplot2)
+library(ggcorrplot)
+library(ggdendro)
+library(gridExtra)
+library(ggthemes)
+library(qdap)
+library(ggpubr)
+library(lubridate)
+library(cluster)
+library(lsa)
+library(LSAfun)
+library(gplots)
+library(topicmodels)
+library(factoextra)
+library(NbClust)
+library(SnowballC)
+library(wordcloud)
+library(openxlsx)
+library(xlsx)
+library(xlsxjars)
+library(rJava)
+library(fossil)
+library(clusterSim)
+library(fpc)
+```
+
+## specific global functions
+
+### removal of certain content
+
+```{r}
+# removal of ...
+
+remove.word <- content_transformer(function(x, pattern) {
+  return(replace(x, grep(pattern, x),""))
+  })
+
+remove.character <- content_transformer(function(x, pattern) {
+  return(gsub(pattern, "",x))
+  })
+
+```
+
+### definition of stopwords
+
+```{r}
+# define own stopwords
+stopwords_own <- c("lol","smh","delta","may","#","dm","ng","pls","n","sa","tel","oj","c","p","tom","cam","i","ii","iii","iv","t","v","footnote","also","always","among","amongst","although","altogether","will","can","vom","von","yes","zur","tkg","tkk","april","august")
+
+custom.stopwords.en.defined <- unique(c(stopwords("english"),stopwords_en, stopwords_own))
+custom.stopwords.en.total<-c(stopwords("english"),stopwords_en, stopwords_own)
+
+stopword.length.df <- data.frame("Anzahl" = c(length(stopwords_own),length(stopwords("english")), length(stopwords_en), length(custom.stopwords.en.defined)), row.names = c("manuelle Definition","tm-package","lsa-package","unique"))
+
+```
+
+### try-catch for ToLower processing
+
+```{r}
+# Function, return NA instead of tolower error
+tryTolower<-function(x){
+  # return NA when there is an error
+  y = NA
+  # tryCatch error
+  try_error = tryCatch(tolower(x), error = function(e) e)
+  # if not an error
+  if (!inherits(try_error,"error"))
+    y = tolower(x)
+  return(y)
+}
+```
+
+
+
+
+# !!! todo
+```{r}
+# y = NA
+# 
+# try_error = tryCatch(log(10), error = function(e) e)
+# 
+# if (!inherits(try_error,"error")) {
+#   print("ok")
+# } else {
+#   print("nok")
+# }
+# 
+# 
+
+
+```
+
+
+
+
+
+
+
+
+### to build the corpus based upon certain steps (preprocessing)
+
+```{r}
+build.corpus<-function(corpus) {
+  # tolower function
+  corpus <- tm_map(corpus, content_transformer(tryTolower))
+  
+  # removal of stopwords
+  corpus <- tm_map(corpus, removeWords, custom.stopwords.en.defined)
+
+  # removal of certain words
+  corpus <- tm_map(corpus, remove.word, "http*")
+  corpus <- tm_map(corpus, remove.word, "www*")
+  corpus <- tm_map(corpus, remove.word, "abwicklungsstell*")
+  corpus <- tm_map(corpus, remove.word, "aecfdigitalstrategi")
+  corpus <- tm_map(corpus, remove.word, "alexand*")
+  corpus <- tm_map(corpus, remove.word, "angelegenheit*")
+  corpus <- tm_map(corpus, remove.word, "anhalt*")
+  
+  # removal of certain characters
+  corpus <- tm_map(corpus, remove.character, "*”")
+  corpus <- tm_map(corpus, remove.character, "‘*")
+  corpus <- tm_map(corpus, remove.character, "“*")
+  corpus <- tm_map(corpus, remove.character, "“*“")
+  corpus <- tm_map(corpus, remove.character, "*’")
+  corpus <- tm_map(corpus, remove.character, "*–*")
+  
+  # removal of punctuation
+  corpus <- tm_map(corpus, removePunctuation, preserve_intra_word_contradictions = F, preserve_intra_word_dashes = F)
+  
+  # removal of whitespaces
+  corpus <- tm_map(corpus, stripWhitespace)
+  
+  # removal of numbers
+  corpus <- tm_map(corpus, removeNumbers)
+  
+  # stemming
+  corpus <- tm_map(corpus, stemDocument, language = "english")
+  # corpus <- tm_map(corpus, stemCompletion)
+  
+  return(corpus)
+}
+```
+
+### for corpus meta-data enrichment
+
+```{r}
+# enrich the corpus with external evaluation items
+
+corpus.idx.df <- function() {
+  
+  vector.1 <- c()
+  vector.2 <- c()
+  
+  for (x in 1:length(corpus)) {
+    
+    vector.1 <- append(vector.1, meta(corpus[[x]], tag = "id"))
+    vector.2 <- append(vector.2, x)
+    
+  }
+  
+  df <- data.frame(vector.1, vector.2)
+  return(df)
+  
+}
+```
+
+### to extract certain values from a capture.output.object of a provided tdm- or dtm-matrix
+
+```{r}
+extract.values.from.capture.output <- function(capture.output.obj) {
+  
+  out <- strsplit(capture.output.obj," ")
+  terms.cnt <- as.numeric(gsub(",","",out[[1]][3]))
+  nonsparse.entries <- as.numeric(strsplit(out[[2]][3],"/")[[1]][1])
+  sparse.entries <- as.numeric(strsplit(out[[2]][3],"/")[[1]][2])
+  sparsity <- out[[3]][13]
+  max.term.len <- as.numeric(out[[4]][4])
+  
+  return(data.frame(terms.cnt,nonsparse.entries,sparse.entries,sparsity,max.term.len))
+}
+```
+
+### load external metadata for corpus enrichment
+
+```{r}
+# load certain metadata from a file
+
+# path to icloud
+# ~/Library/Mobile\ Documents/com~apple~CloudDocs/
+
+# UC.07 Informationen austauschen
+rawdata <- read.csv(file = "~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/corpus.eval.values.v2.csv", sep = ";")
+eval.df <- data.frame(rawdata, row.names = "id")
+
+```
+
+### to enrich the corpus with metadata
+
+```{r}
+# map alphanumeric parameter values to numeric values
+
+eval.df["relevance"][eval.df["relevance"] == ""] <- NA
+eval.df["relevance"][eval.df["relevance"] == "l"] <- 0.33
+eval.df["relevance"][eval.df["relevance"] == "h"] <- 0.99
+eval.df["relevance"][eval.df["relevance"] == "m"] <- 0.66
+eval.df$relevance <- as.numeric(eval.df$relevance)
+
+eval.df["quality"][eval.df["quality"] == 1] <- 0.99
+eval.df["quality"][eval.df["quality"] == 2] <- 0.75
+eval.df["quality"][eval.df["quality"] == 3] <- 0.50
+eval.df["quality"][eval.df["quality"] == 4] <- 0.25
+eval.df["quality"][eval.df["quality"] == 5] <- 0.01
+```
+
+## definition of global variables
+```{r}
+# for the creation of term-document-matrices
+minWordLength <- 3
+tdm.tf.minWordLength <- minWordLength
+tdm.tfidf.minWordLength <- minWordLength
+dtm.tf.minWordLength <- minWordLength
+dtm.tfidf.minWordLength <- minWordLength
+```
+
+
+
+
+
+# global function to store ggplots
+```{r}
+uc07_ggplot <- function(ggobject) {
+  file_name <- as.character(substitute(ggobject))
+  ggsave(file = paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/pics/",file_name,"_",cv,cc,".png", sep = ""), plot = ggobject, dpi = 300, limitsize = F)
+}
+```
+
+
+
+
+
+
+# global function to store data as xlsx, csv and table
+```{r}
+uc07_data <- function(data_object,type,version = T) {
+  file_name <- as.character(substitute(data_object))
+  
+  if (!version) {
+    id <- cv
+  } else {
+    id <- paste(cv,cc,sep = "")
+  }
+  
+  if (type == "xlsx") {
+    write.xlsx(data_object, paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/",file_name,"_",id,".xlsx", sep=""))
+    # print(paste(type,id))
+  }
+   else if (type == "csv") {
+   write.csv(data_object, paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/",file_name,"_",id,".csv", sep=""))
+    # print(paste(type,id))
+} else if (type == "tbl") {
+   write.table(data_object,paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/",file_name,"_",id,".csv", sep=""))
+  # print(paste(type,id))
+} else {
+  print("false date provided, nothing saved locally!")
+}
+}
+
+```
+
+
+
+
+# UC.01 Dokumente-Korpus anlegen
+## import all documents from of an input directory and built a document vcorpus 
+
+```{r}
+# path to icloud
+file.path <- file.path("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/docs")
+corpus.raw.file <- VCorpus(DirSource(file.path), readerControl = list(reader = readPDF, language = "en"))
+corpus.raw.file.doc.cnt <- as.numeric(strsplit(capture.output(corpus.raw.file)[[3]],":")[[1]][3])
+paste("Der Korpus (corpus.raw.file) enthält",corpus.raw.file.doc.cnt,"Dokumente.")
+```
+
+## manipulate the corpus based upon the (preprocessing) functions
+### remove documents if the raw corpus indicates chars-value with 0
+
+```{r}
+
+df <- data.frame()
+
+for (item in 1:length(corpus.raw.file)) {
+  out <- capture.output(corpus.raw.file[[item]])
+  out <- as.vector(strsplit(out,":"))
+  chars <- as.integer(out[[3]][3])
+  df <- rbind(df,chars)
+}
+
+df <- apply(df, 1, as.numeric)
+df.neg <- !df
+paste("Aus dem Korpus (corpus.raw.file) soll entfernt werden:")
+
+for (item in 1:length(df.neg)) {
+  
+  if (df.neg[item]) {
+    print(corpus.raw.file[[item]]$meta$id)
+    meta(corpus.raw.file[[item]], tag = "delete") <- T
+    #corpus.raw[[item]] = NULL
+  } else meta(corpus.raw.file[[item]], tag = "delete") <- F
+}
+```
+
+```{r}
+# UC.06, UC.07 corpus version festlegen (für Dateinamen)
+cv <- 1
+
+# vorherige versionen des corpus ablegen
+corpus.raw <- corpus.raw.file
+
+item <- length(corpus.raw)
+print("Aus dem Korpus (corpus.raw) wurde entfernt:")
+
+while (item > 0) {
+  if (corpus.raw[[item]]$meta$delete) {
+    print(corpus.raw[[item]]$meta$id)
+    corpus.raw[[item]] = NULL
+    item = item - 1
+  }
+  item = item - 1
+}
+
+corpus.raw.doc.cnt <- as.numeric(strsplit(capture.output(corpus.raw)[[3]],":")[[1]][3])
+paste("Der Korpus (corpus.raw) enthält",corpus.raw.doc.cnt,"Dokumente.")
+
+```
+
+## build the corpus
+
+```{r}
+corpus <- build.corpus(corpus.raw)
+
+corpus.doc.cnt <- as.numeric(strsplit(capture.output(corpus)[[3]],":")[[1]][3])
+paste("Der Korpus (corpus) enthält",corpus.doc.cnt,"Dokumente.")
+
+```
+
+## mark the documents in the corpus due to "0" chars values
+
+```{r}
+df <- data.frame()
+
+for (item in 1:length(corpus)) {
+  out <- capture.output(corpus[[item]])
+  out <- as.vector(strsplit(out,":"))
+  chars <- as.integer(out[[3]][3])
+  df <- rbind(df,chars)
+}
+
+df <- apply(df, 1, as.numeric)
+df.neg <- !df
+
+print("Aus dem Korpus (corpus) sollen entfernt werden:")
+for (item in 1:length(df.neg)) {
+  
+  if (df.neg[item]) {
+    print(corpus[[item]]$meta$id)
+    meta(corpus[[item]], tag = "delete") <- T
+    #corpus.raw[[item]] = NULL
+  } else meta(corpus[[item]], tag = "delete") <- F
+}
+```
+
+## remove documents from the corpus due to "0" chars values
+
+```{r}
+item <- length(corpus)
+print("Aus dem Korpus (corpus) wurden entfernt:")
+
+while (item > 0) {
+  if (corpus[[item]]$meta$delete) {
+    print(corpus[[item]]$meta$id)
+    corpus[[item]] = NULL
+    item = item - 1
+  }
+  item = item - 1
+}
+
+corpus.doc.cnt <- as.numeric(strsplit(capture.output(corpus)[[3]],":")[[1]][3])
+paste("Der Korpus (corpus) besteht aus",corpus.doc.cnt,"Dokumenten.")
+```
+
+```{r}
+# path to icloud
+# ~/Library/Mobile\ Documents/com~apple~CloudDocs/
+df <- corpus.idx.df()
+
+# UC.07 Informationen austauschen
+write.xlsx(df, paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/corpus.idx.cv",cv,".xlsx", sep=""))
+```
+
+## function to fill empty metadata with NA-value
+
+```{r}
+replace.meta.info <- function(corpus) {
+  
+  for (item in 1:length(corpus)) {
+    if(is.null(corpus[[item]]$meta$author)) meta(corpus[[item]], tag = "author") <- c("NA")
+    if(is.null(corpus[[item]]$meta$description)) meta(corpus[[item]], tag = "description") <- c("NA")
+    if(is.null(corpus[[item]]$meta$datetimestamp)) meta(corpus[[item]], tag = "datetimestamp") <- c("NA")
+    if(is.null(corpus[[item]]$meta$heading)) meta(corpus[[item]], tag = "heading") <- c("NA")
+    if(is.null(corpus[[item]]$meta$id)) meta(corpus[[item]], tag = "id") <- c("NA")
+    if(is.null(corpus[[item]]$meta$language)) meta(corpus[[item]], tag = "language") <- c("NA")
+    if(is.null(corpus[[item]]$meta$origin)) meta(corpus[[item]], tag = "origin") <- c("NA")
+  }
+  return(corpus)
+}
+```
+
+## fill emtpy metadata with NA-values
+
+```{r}
+corpus <- replace.meta.info(corpus)
+```
+
+## enrich the corpus with external meta-data
+
+```{r}
+for (x in 1:length(corpus)) {
+  search.tag <- meta(corpus[[x]], tag = "id")
+  meta(corpus[[x]], tag = "eval.quality") <- eval.df["quality"][eval.df["vector.1"] == search.tag]
+  meta(corpus[[x]], tag = "eval.relevance") <- eval.df["relevance"][eval.df["vector.1"] == search.tag]
+  meta(corpus[[x]], tag = "eval.sano") <- eval.df["sano"][eval.df["vector.1"] == search.tag]
+  meta(corpus[[x]], tag = "eval.subject") <- eval.df["subject"][eval.df["vector.1"] == search.tag]
+  meta(corpus[[x]], tag = "eval.date") <- as.POSIXct.Date(as.Date(eval.df["date"][eval.df["vector.1"] == search.tag], tryFormats = c("%d.%m.%Y")))
+  meta(corpus[[x]], tag = "eval.state") <- eval.df["state"][eval.df["vector.1"] == search.tag]
+  meta(corpus[[x]], tag = "eval.region") <- eval.df["region"][eval.df["vector.1"] == search.tag]
+  meta(corpus[[x]], tag = "eval.decno") <- eval.df["decno"][eval.df["vector.1"] == search.tag]
+}
+```
+
+## give an overview of the corpus metadata
+
+```{r}
+# export an overview of the corpus
+df <- data.frame()
+
+for (item in 1:length(corpus)) {
+  text <- c(corpus[[item]]$meta$author,
+            as.character(corpus[[item]]$meta$datetimestamp),
+            corpus[[item]]$meta$description,
+            corpus[[item]]$meta$heading,
+            corpus[[item]]$meta$id,
+            corpus[[item]]$meta$language,
+            corpus[[item]]$meta$origin,
+            corpus[[item]]$meta$eval.quality,
+            corpus[[item]]$meta$eval.relevance,
+            corpus[[item]]$meta$eval.sano,
+            corpus[[item]]$meta$eval.subject,
+            corpus[[item]]$meta$eval.date,
+            corpus[[item]]$meta$eval.state,
+            corpus[[item]]$meta$eval.region,
+            corpus[[item]]$meta$eval.decno
+            )
+  # text <- c(corpus[[item]]$meta$id)
+  df <- rbind(df, text)
+}
+
+colnames(df) <- c("Author","Date","Description","Heading","ID","Language","Origin","Quality","Relevance","State-Aid-No.","Subject","Date","MemberState","MemberRegion","Decision-No.")
+
+# UC.07 Informationen austauschen
+write.xlsx(df, paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/corpus.info.cv",cv,".xlsx", sep=""))
+```
+
+## investigate the corpus
+```{r}
+# UC.06 Informationen visualisieren
+paste("Der Korpus (corpus) besteht aus",as.numeric(strsplit(capture.output(corpus)[[3]],":")[[1]][3]),"Dokumenten.")
+```
+
+```{r}
+# UC.07 Informationen austauschen
+# writeCorpus(corpus, filenames = paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/corpus.c",cv,".data", sep = ""))
+```
+
+# UC.02 Grundlagen der Zusammenhangs-Analyse festlegen
+## definition area
+```{r}
+uc02_xlsx_list <- list()
+```
+
+
+## build the TermDocumentMatrices by TermFrequency as well as TermFrequencyInverseDocumentFrequency 
+
+```{r}
+tdm.tf <- TermDocumentMatrix(corpus, control = list(weighting=weightTf, minWordLength = tdm.tf.minWordLength))
+tdm.tfidf <- TermDocumentMatrix(corpus, control = list(weighting=weightTfIdf, minWordLength = tdm.tfidf.minWordLength))
+```
+
+## build the DocumentTermMatrices by TermFrequency as well as TermFrequencyInverseDocumentFrequency
+
+```{r}
+dtm.tf <- DocumentTermMatrix(corpus, control = list(weighting=weightTf,minWordLength = dtm.tf.minWordLength))
+dtm.tfidf <- DocumentTermMatrix(corpus, control = list(weighting=weightTfIdf,minWordLength = dtm.tfidf.minWordLength))
+```
+
+## save the Matrices locally -- move to later position?!
+```{r}
+# UC.07 Informationen austauschen
+tdm.tf.disp <- as.matrix(tdm.tf)
+# uc07_data(tdm.tf.disp,"csv",F)
+
+tdm.tfidf.disp <- as.matrix(tdm.tfidf)
+# uc07_data(tdm.tfidf.disp,"csv",F)
+# write.csv(as.matrix(tdm.tf), file = "~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/tdm.tf.matrix.csv")
+
+```
+
+## analyse the Matrices
+### an initial impression about the tdm matrices
+
+```{r}
+# print("Term-Document-Matrix (term-frequency):")
+# for tdm.tf
+tdm.tf.summary.table <- as.table(summary(tdm.tf$v))
+
+# print("Term-Document-Matrix (term-frequency-inverse-document-frequency:")
+# for tdm.tfidf
+tdm.tfidf.summary.table <- as.table(summary(tdm.tfidf$v))
+
+# UC.06 Informationen visualisieren
+tdm.summary.table <- data.frame(as.numeric(tdm.tf.summary.table))
+tdm.summary.table <- cbind(tdm.summary.table, as.numeric(tdm.tfidf.summary.table))
+row.names(tdm.summary.table) <- names(tdm.tf.summary.table)
+tdm.summary.table <- t(tdm.summary.table)
+row.names(tdm.summary.table) <- c("tdm.tf","tdm.tfidf")
+
+as.data.frame(tdm.summary.table)
+
+# tdm statistics
+# UC.06 Informationen visualisieren
+
+tdm.tf.summary <- extract.values.from.capture.output(capture.output(tdm.tf))
+tdm.tfidf.summary <- extract.values.from.capture.output(capture.output(tdm.tfidf))
+
+tdm.tf.summary.disp <- tdm.tf.summary
+tdm.tfidf.summary.disp <- tdm.tfidf.summary
+
+colnames(tdm.tf.summary.disp) <- c("Terms","Non-sparse entries","Sparse entries","Sparsity","Max. term length")
+row.names(tdm.tf.summary.disp) <- c("tdm.tf")
+# tdm.tf.summary.disp
+
+colnames(tdm.tfidf.summary.disp) <- c("Terms","Non-sparse entries","Sparse entries","Sparsity","Max. term length")
+row.names(tdm.tfidf.summary.disp) <- c("tdm.tfidf")
+# tdm.tfidf.summary.disp
+
+tdm.tf_tfidf.summary.disp <- rbind(tdm.tf.summary.disp,tdm.tfidf.summary.disp)
+tdm.tf_tfidf.summary.disp
+
+# UC.07 Informationen austauschen
+uc02_xlsx_list <- append(uc02_xlsx_list, list(tdm.tf_tfidf.summary = as.data.frame(tdm.summary.table)))
+# uc07_data(tdm.tf.summary.disp,"xlsx",F)
+
+# write.xlsx(tdm.summary.disp, paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/tdm.summary.table_",cv,".xlsx", sep=""))
+
+uc02_xlsx_list <- append(uc02_xlsx_list, list(tdm.tf_tfidf.ov = tdm.tf_tfidf.summary.disp))
+# uc07_data(tdm.tf_tfidf.summary.disp,"xlsx",F)
+# write.xlsx(tdm.tf_tfidf.summary.disp, paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/tdm.tf_tfidf.summary.disp_",cv,".xlsx", sep=""))
+
+```
+
+
+```{r}
+TopNMostFreqTerms <- 10
+tdm.tf.MostFreqTerms <- unlist(findMostFreqTerms(tdm.tf, n = TopNMostFreqTerms))
+tdm.tfidf.MostFreqTerms <- unlist(findMostFreqTerms(tdm.tfidf, n = TopNMostFreqTerms))
+
+# UC.07 share information
+# uc07_data(tdm.tf.MostFreqTerms,"csv",F)
+# uc07_data(tdm.tfidf.MostFreqTerms,"csv",F)
+
+```
+
+### evaluate the sparsity of the matrices
+#### an attempt to reduce the sparsity (the features) of the matrices via the overall tf- and tfidf-median (reference: "topicmodels: An R Package for Fitting Topic Models, Grün, Hornik, 2011")
+
+```{r}
+# transform the tdm
+tdm.tf.matrix <- as.matrix(tdm.tf)
+tdm.tf.df <- as.data.frame(tdm.tf.matrix)
+
+# row-wise calculation of the median for tf
+tdm.tf.median.rw <- apply(tdm.tf.df[,-1],1,median)
+tdm.tf.df <- cbind(tdm.tf.df, tdm.tf.median.rw)
+
+# tdm.tf.df$row_median = apply(tdm.tf.df[,-1],1,median)
+
+# transform the tdm
+tdm.tfidf.matrix <- as.matrix(tdm.tfidf)
+tdm.tfidf.df <- as.data.frame(tdm.tfidf.matrix)
+
+# row-wise calculation of the median for tfidf
+tdm.tfidf.median.rw <- apply(tdm.tfidf.df[,-1],1,median)
+tdm.tfidf.df <- cbind(tdm.tfidf.df, tdm.tfidf.median.rw)
+
+# tdm.tfidf.df$row_median = apply(tdm.tfidf.df[,-1],1,median)
+
+# determine the overall median of the tdm for tf
+tdm.tf.median <- round(median(tdm.tf$v))
+features.above.tf.median <- row.names(tdm.tf.df[tdm.tf.df$tdm.tf.median.rw > tdm.tf.median,])
+
+# determine the overall media of the tdm for tfidf
+temp.table.summary <- as.table(summary(tdm.tfidf$v))
+temp.table.quantile <- as.table(quantile(tdm.tfidf$v, probs = c(0,.05,.1,.2,.25,.3,.4,.5,.6,.7,.75,.8,.9,1)))
+tdm.tfidf.median <- round(median(tdm.tfidf$v), digits = 4)
+features.above.tfidf.median <- row.names(tdm.tfidf.df[tdm.tfidf.df$tdm.tfidf.median.rw > tdm.tfidf.median,])
+
+# reduce the sparsity of the tdm for tf and tfidf
+tdm.tf.features.reducedby.tf <- tdm.tf[features.above.tf.median,]
+tdm.tf.features.reducedby.tfidf <- tdm.tf[features.above.tfidf.median,]
+tdm.tfidf.features.reducedby.tfidf <- tdm.tfidf[features.above.tfidf.median,]
+
+# UC.06 Informationen visualisieren
+temp.table.summary
+temp.table.quantile
+
+# UC.07 Informationen austauschen
+# uc07_data(tdm.tf.df,"tbl",F)
+# uc07_data(tdm.tfidf.df,"tbl",F)
+# write.table(tdm.tf.df,paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/tdm.tf.df_",cv,".csv", sep=""), sep = ",")
+# write.table(tdm.tfidf.df,paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/tdm.tfidf.df_",cv,".csv", sep=""), sep = ",")
+
+tdm.tfidf.temp.table.summary <- as.array(temp.table.summary)
+uc07_data(tdm.tfidf.temp.table.summary,"tbl",F)
+tdm.tfidf.temp.table.quantile <- as.array(temp.table.quantile)
+uc07_data(tdm.tfidf.temp.table.quantile,"tbl",F)
+
+# write.table(as.array(temp.table.summary),paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/sparse.term.var1.summary_",cv,".csv", sep=""))
+# write.table(as.array(temp.table.quantile),paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/sparse.term.var1.quantile_",cv,".csv", sep=""))
+
+```
+
+#### an alternative approach to reduce the sparsity of the tdm.tf based upon the tm's removeSparseTerms function
+
+```{r}
+# evaluation of appropriate sparsity values for the function removeSparseTerms for tdm.tf
+
+temp.out <- capture.output(tdm.tf)
+split.out.nse <- strsplit(temp.out[2], split = ":")
+split.out.sparsity <- strsplit(temp.out[3], split = ":")
+split.out.mtl <- strsplit(temp.out[4], split = ":")
+
+
+tdm.tf.sparsity.value.eval <- data.frame()
+tdm.tf.sparsity.value.eval <- rbind(tdm.tf.sparsity.value.eval,c("orig",as.numeric(tdm.tf$nrow),as.numeric(summary(tdm.tf$v)),split.out.nse[[1]][2],split.out.sparsity[[1]][2], split.out.mtl[[1]][2]))
+
+
+# df <- data.frame()
+# df <- rbind(df,c("orig",as.numeric(tdm.tf$nrow),as.numeric(summary(tdm.tf$v)),split.out.nse[[1]][2],split.out.sparsity[[1]][2], split.out.mtl[[1]][2]))
+
+for (sparsity in c(0.99,0.95,0.9,0.85,0.8,0.75,0.7,0.65,0.6,0.55,0.5,0.45,0.4,0.35,0.3,0.25,0.2,0.15,0.1,0.05,0.01)) {
+  temp <- removeSparseTerms(tdm.tf, sparsity)
+  temp.out <- capture.output(temp)
+  split.out.nse <- strsplit(temp.out[2], split = ":")
+  split.out.sparsity <- strsplit(temp.out[3], split = ":")
+  split.out.mtl <- strsplit(temp.out[4], split = ":")
+  output <- c(sparsity,as.numeric(temp$nrow),as.numeric(summary(temp$v)),split.out.nse[[1]][2],split.out.sparsity[[1]][2], split.out.mtl[[1]][2])
+  #print(summary(temp$v))
+  tdm.tf.sparsity.value.eval <- rbind(tdm.tf.sparsity.value.eval,output)
+}
+colnames(tdm.tf.sparsity.value.eval) <- c("sparsity","features",names(summary(temp$v)),"Non-/sparse entries","Sparsity","Maximal term length")
+tdm.tf.sparsity.value.eval <- transform(tdm.tf.sparsity.value.eval, features = as.numeric(features))
+# df
+```
+
+```{r}
+# UC.06, visualize the evaluation results
+
+tdm.tf.sparsity.value.eval.ggplot <- ggplot(data = tdm.tf.sparsity.value.eval, aes(x=`sparsity`,y=features)) +geom_bar(stat = "identity") +ggtitle("Evaluation of sparsity value for feature reduction", subtitle = "TermDocumentMatrix based upon term-frequencies") +xlab("selected sparsity value") +ylab("amount of remaining features\nper selected sparsity value")
+
+tdm.tf.sparsity.value.eval.ggplot
+
+# UC.07 Informationen austauschen
+ggsave(paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/pics/tdm.tf.sparsity.value.eval.ggplot_",cv,".png", sep=""), plot = tdm.tf.sparsity.value.eval.ggplot)
+
+uc02_xlsx_list <- append(uc02_xlsx_list, list(tdm.tf.sparsity.value.eval = tdm.tf.sparsity.value.eval))
+# uc07_data(tdm.tf.sparsity.value.eval,"xlsx",F)
+# write.xlsx(tdm.tf.sparsity.value.eval, paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/tdm.tf.sparsity.value.eval_",cv,".xlsx", sep=""))
+
+```
+
+```{r}
+# set the sparsity value for removeSparseTerms function manually for tdm.tf
+tdm.tf.sparsity.value.suggested <- 0.95
+
+# call the function to remove sparse terms
+tdm.tf.features.reducedby.rst <- removeSparseTerms(tdm.tf, tdm.tf.sparsity.value.suggested)
+
+```
+
+### another approach to reduce the sparsity of the tfidf-tdm based upon the removeSparseTerms function
+
+```{r}
+# evaluation of appropriate sparsity values for the function removeSparseTerms for tdm.tfidf
+
+temp.out <- capture.output(tdm.tfidf)
+split.out.nse <- strsplit(temp.out[2], split = ":")
+split.out.sparsity <- strsplit(temp.out[3], split = ":")
+split.out.mtl <- strsplit(temp.out[4], split = ":")
+
+tdm.tfidf.sparsity.value.eval <- data.frame()
+tdm.tfidf.sparsity.value.eval <- rbind(tdm.tfidf.sparsity.value.eval,c("orig",as.numeric(tdm.tfidf$nrow),as.numeric(summary(tdm.tfidf$v)),split.out.nse[[1]][2],split.out.sparsity[[1]][2], split.out.mtl[[1]][2]))
+
+for (sparsity in c(0.99,0.95,0.9,0.85,0.8,0.75,0.7,0.65,0.6,0.55,0.5,0.45,0.4,0.35,0.3,0.25,0.2,0.15,0.1,0.05,0.01)) {
+  temp <- removeSparseTerms(tdm.tfidf, sparsity)
+  temp.out <- capture.output(temp)
+  split.out.nse <- strsplit(temp.out[2], split = ":")
+  split.out.sparsity <- strsplit(temp.out[3], split = ":")
+  split.out.mtl <- strsplit(temp.out[4], split = ":")
+  output <- c(sparsity,as.numeric(temp$nrow),as.numeric(summary(temp$v)),split.out.nse[[1]][2],split.out.sparsity[[1]][2], split.out.mtl[[1]][2])
+  #print(summary(temp$v))
+  tdm.tfidf.sparsity.value.eval <- rbind(tdm.tfidf.sparsity.value.eval,output)
+}
+colnames(tdm.tfidf.sparsity.value.eval) <- c("sparsity","features",names(summary(temp$v)),"Non-/sparse entries","Sparsity","Maximal term length")
+tdm.tfidf.sparsity.value.eval <- transform(tdm.tfidf.sparsity.value.eval, features = as.numeric(features))
+# df
+```
+
+```{r}
+# UC.06, visualize the evaluation results
+
+tdm.tfidf.sparsity.value.eval.ggplot <- ggplot(data = tdm.tfidf.sparsity.value.eval, aes(x=`sparsity`,y=features)) +geom_bar(stat = "identity") +ggtitle("Evaluation of sparsity value for feature reduction", subtitle = "TermDocumentMatrix based upon term-frequencies-inverse-document-frequency") +xlab("selected sparsity value") +ylab("amount of remaining features\nper selected sparsity value")
+
+tdm.tfidf.sparsity.value.eval.ggplot
+
+# UC.07 Informationen austauschen
+ggsave(paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/pics/tdm.tfidf.sparsity.value.eval.ggplot_",cv,".png", sep = ""), plot = tdm.tfidf.sparsity.value.eval.ggplot)
+
+uc02_xlsx_list <- append(uc02_xlsx_list, list(tdm.tfidf.sparsity.value.eval = tdm.tfidf.sparsity.value.eval))
+# uc07_data(tdm.tfidf.sparsity.value.eval,"xlsx",F)
+#write.xlsx(tdm.tfidf.sparsity.value.eval, paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/tdm.tfidf.sparsity.value.eval_",cv,".xlsx", sep=""))
+```
+
+```{r}
+# set the sparsity value for removeSparseTerms function manually for tdm.tfidf
+
+tdm.tfidf.sparsity.value.suggested <- 0.95
+
+# call the function to remove sparse terms
+tdm.tfidf.features.reducedby.rst <- removeSparseTerms(tdm.tfidf, tdm.tfidf.sparsity.value.suggested)
+
+```
+
+### summary of the results by the sparsity reduction actions for tdm.tf and tdm.tfidf
+
+```{r}
+# UC.06 Informationen visualieren
+tdm.tf.summary <- rbind(tdm.tf.summary,extract.values.from.capture.output(capture.output(tdm.tf.features.reducedby.tfidf)),extract.values.from.capture.output(capture.output(tdm.tf.features.reducedby.rst)))
+tdm.tf.summary
+
+tdm.tfidf.summary <- rbind(tdm.tfidf.summary,extract.values.from.capture.output(capture.output(tdm.tfidf.features.reducedby.tfidf)),extract.values.from.capture.output(capture.output(tdm.tfidf.features.reducedby.rst)))
+tdm.tfidf.summary
+
+colnames(tdm.tf.summary) <- c("Terms","Non-sparse entries","Sparse entries","Sparsity","Max. term length")
+row.names(tdm.tf.summary) <- c("tdm.tf","tdm.tf.redby.tfidf","tdm.tf.redby.rst")
+tdm.tf.summary
+
+colnames(tdm.tfidf.summary) <- c("Terms","Non-sparse entries","Sparse entries","Sparsity","Max. term length")
+row.names(tdm.tfidf.summary) <- c("tdm.tfidf","tdm.tfidf.redby.tfidf","tdm.tfidf.redby.rst")
+tdm.tfidf.summary
+
+# UC.07 Informationen austauschen
+
+uc02_xlsx_list <- append(uc02_xlsx_list, list(tdm.tf.summary = tdm.tf.summary))
+uc02_xlsx_list <- append(uc02_xlsx_list, list(tdm.tfidf.summary = tdm.tfidf.summary))
+
+# uc07_data(tdm.tf.summary,"xlsx",F)
+# uc07_data(tdm.tfidf.summary,"xlsx",F)
+
+# write.xlsx(tdm.tf.summary, paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/tdm.tf.summary.table_",cv,".xlsx", sep=""))
+# write.xlsx(tdm.tfidf.summary, paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/tdm.tfidf.summary.table_",cv,".xlsx", sep=""))
+
+```
+
+### transform the tdm.tf and tdm.tfidf into matrices and dataframes for further processing
+
+```{r}
+# tdm tf matrices
+tdm.tf.matrix <- as.matrix(tdm.tf)
+tdm.tf.matrix.df <- data.frame(tdm.tf.matrix)
+tdm.tf.features.reducedby.tfidf.matrix <- as.matrix(tdm.tf.features.reducedby.tfidf)
+tdm.tf.features.reducedby.tfidf.matrix.df <- data.frame(tdm.tf.features.reducedby.tfidf.matrix)
+tdm.tf.features.reducedby.rst.matrix <- as.matrix(tdm.tf.features.reducedby.rst)
+tdm.tf.features.reducedby.rst.matrix.df <- data.frame(tdm.tf.features.reducedby.rst.matrix)
+
+# tdm tfidf matrices
+tdm.tfidf.matrix <- as.matrix(tdm.tfidf)
+tdm.tfidf.matrix.df <- data.frame(tdm.tfidf.matrix)
+tdm.tfidf.features.reducedby.tfidf.matrix <- as.matrix(tdm.tfidf.features.reducedby.tfidf)
+tdm.tfidf.features.reducedby.tfidf.matrix.df <- data.frame(tdm.tfidf.features.reducedby.tfidf.matrix)
+tdm.tfidf.features.reducedby.rst.matrix <- as.matrix(tdm.tfidf.features.reducedby.rst)
+tdm.tfidf.features.reducedby.rst.matrix.df <- data.frame(tdm.tfidf.features.reducedby.rst.matrix)
+
+# dtm tf matrices
+dtm.tf.matrix <- as.matrix(dtm.tf)
+dtm.tf.matrix.df <- data.frame(dtm.tf.matrix)
+dtm.tf.features.reducedby.tfidf <- t(tdm.tf.features.reducedby.tfidf)
+dtm.tf.features.reducedby.rst <- t(tdm.tf.features.reducedby.rst)
+dtm.tf.features.reducedby.tfidf.matrix <- t(tdm.tf.features.reducedby.tfidf.matrix)
+dtm.tf.features.reducedby.tfidf.matrix.df <- data.frame(dtm.tf.features.reducedby.tfidf.matrix)
+dtm.tf.features.reducedby.rst.matrix <- t(tdm.tf.features.reducedby.rst.matrix)
+dtm.tf.features.reducedby.rst.matrix.df <- data.frame(dtm.tf.features.reducedby.rst.matrix)
+
+# dtm tfidf matrices
+dtm.tfidf.matrix <- as.matrix(dtm.tfidf)
+dtm.tfidf.matrix.df <- data.frame(dtm.tfidf.matrix)
+dtm.tfidf.features.reducedby.tfidf <- t(tdm.tf.features.reducedby.tfidf)
+dtm.tfidf.features.reducedby.rst <- t(tdm.tf.features.reducedby.rst)
+dtm.tfidf.features.reducedby.tfidf.matrix <- t(tdm.tfidf.features.reducedby.tfidf.matrix)
+dtm.tfidf.features.reducedby.tfidf.matrix.df <- data.frame(dtm.tfidf.features.reducedby.tfidf.matrix)
+dtm.tfidf.features.reducedby.rst.matrix <- t(tdm.tfidf.features.reducedby.rst.matrix)
+dtm.tfidf.features.reducedby.rst.matrix.df <- data.frame(dtm.tfidf.features.reducedby.rst.matrix)
+```
+
+
+```{r}
+cluster.cnt.overall <- 2
+cc <- cluster.cnt.overall
+```
+
+
+
+### create the tdm.list for processing
+```{r}
+tdm.list <- list(tf_tfidf = 1, tf_rst = 2, tfidf_tfidf = 3, tfidf_rst = 4)
+
+tdm.list$tf_tfidf <- append(tdm.list$tf_tfidf, list(tdm = tdm.tf.features.reducedby.tfidf, dtm = dtm.tf.features.reducedby.tfidf, matrix = tdm.tf.features.reducedby.tfidf.matrix, name = as.character(substitute(tdm.tf.features.reducedby.tfidf)), cc = cluster.cnt.overall, cv = cv, cosine = NA, kmeans = NA, kmedoids = NA, lsa = NA, lsa_cosine = NA, lsa_kmeans = NA, lda = NA, lda_topic = NA, lda_kmeans = NA))
+
+tdm.list$tf_rst <- append(tdm.list$tf_rst, list(tdm = tdm.tf.features.reducedby.rst, dtm = dtm.tf.features.reducedby.rst, matrix = tdm.tf.features.reducedby.rst.matrix, name = as.character(substitute(tdm.tf.features.reducedby.rst)), cc = cluster.cnt.overall, cv = cv, cosine = NA, kmeans = NA, kmedoids = NA, lsa = NA, lsa_cosine = NA, lsa_kmeans = NA, lda = NA, lda_topic = NA, lda_kmeans = NA))
+
+tdm.list$tfidf_tfidf <- append(tdm.list$tfidf_tfidf, list(tdm = tdm.tfidf.features.reducedby.tfidf, dtm = dtm.tfidf.features.reducedby.tfidf, matrix = tdm.tfidf.features.reducedby.tfidf.matrix, name = as.character(substitute(tdm.tfidf.features.reducedby.tfidf)), cc = cluster.cnt.overall, cv = cv, cosine = NA, kmeans = NA, kmedoids = NA, lsa = NA, lsa_cosine = NA, lsa_kmeans = NA, lda = NA, lda_topic = NA, lda_kmeans = NA))
+
+tdm.list$tfidf_rst <- append(tdm.list$tfidf_rst, list(tdm = tdm.tfidf.features.reducedby.rst, dtm = dtm.tfidf.features.reducedby.rst, matrix = tdm.tfidf.features.reducedby.rst.matrix, name = as.character(substitute(tdm.tfidf.features.reducedby.rst)), cc = cluster.cnt.overall, cv = cv, cosine = NA, kmeans = NA, kmedoids = NA, lsa = NA, lsa_cosine = NA, lsa_kmeans = NA, lda = NA, lda_topic = NA, lda_kmeans = NA))
+
+```
+
+
+
+
+
+
+
+### local storage of all matrices
+
+```{r}
+
+uc02_xlsx_list <- append(uc02_xlsx_list, list(tdm.tf_tfidf = tdm.tf.features.reducedby.tfidf.matrix))
+uc02_xlsx_list <- append(uc02_xlsx_list, list(tdm.tf_rst = tdm.tf.features.reducedby.rst.matrix))
+uc02_xlsx_list <- append(uc02_xlsx_list, list(tdm.tfidf_tfidf = tdm.tfidf.features.reducedby.tfidf.matrix))
+uc02_xlsx_list <- append(uc02_xlsx_list, list(tdm.tfidf_rst = tdm.tfidf.features.reducedby.rst.matrix))
+
+# uc07_data(tdm.tf.features.reducedby.tfidf.matrix,"xlsx",F)
+# uc07_data(tdm.tfidf.features.reducedby.tfidf.matrix,"xlsx",F)
+# uc07_data(tdm.tf.features.reducedby.rst.matrix,"xlsx",F)
+# uc07_data(tdm.tfidf.features.reducedby.rst.matrix,"xlsx",F)
+
+# write.xlsx(tdm.tf.features.reducedby.tfidf.matrix, file = "~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/tdm.tf.features.reducedby.tfidf.matrix.xlsx")
+# # 
+# write.xlsx(tdm.tfidf.features.reducedby.tfidf.matrix, file = "~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/tdm.tfidf.features.reducedby.tfidf.matrix.xlsx")
+# # 
+# write.csv(tdm.tf.features.reducedby.rst.matrix,file="~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/tdm.tf.features.reducedby.rst.matrix.csv")
+# # 
+# write.csv(tdm.tfidf.features.reducedby.rst.matrix,file="~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/tdm.tfidf.features.reducedby.rst.matrix.csv")
+
+```
+
+### initial visualisations of the corpus and term-document-matrix with wordcloud (UC.06, UC.07)
+## wordcloud visualisation for the whole corpus
+
+```{r}
+set.seed(1234)
+corpus.feature.freq.min <- 200
+wordcloud(corpus, min.freq = corpus.feature.freq.min, scale = c(3.0,0.2), random.order = F, rot.per = 0.35, colors = brewer.pal(8, "Dark2"))
+```
+## wordcloud visualisation for tdm.tf
+
+```{r}
+set.seed(1234)
+v <- sort(rowSums(as.matrix(tdm.tf)), decreasing = T)
+df <- data.frame(word = names(v), freq = v)
+corpus.feature.freq.min <- 200
+wordcloud(df$word, df$freq, min.freq = corpus.feature.freq.min, scale = c(3.0,0.2), random.order = F, rot.per = 0.35, colors = brewer.pal(8, "Dark2"))
+```
+
+## wordcloud visualisation for tdm.tfidf
+
+```{r}
+set.seed(1234)
+v <- sort(rowSums(as.matrix(tdm.tfidf)), decreasing = T)
+df <- data.frame(word = names(v), freq = v)
+corpus.feature.freq.min <- 0.13
+wordcloud(df$word, df$freq, min.freq = corpus.feature.freq.min, scale = c(3.0,0.2), random.order = F, rot.per = 0.35, colors = brewer.pal(8, "Dark2"))
+```
+
+## wordcloud visualisation of the features for the tdm.tf.features.reducedby.tfidf
+
+```{r}
+v <- sort(rowSums(tdm.tf.features.reducedby.tfidf.matrix), decreasing = T)
+df <- data.frame(word = names(v), freq = v)
+set.seed(1234)
+wordcloud(df$word, df$freq, scale = c(3.0,0.2), random.order = F, rot.per = 0.35, colors = brewer.pal(8, "Dark2"))
+```
+
+## tabular representation of the features for tdm.tf.features.reducedby.tfidf
+
+```{r}
+# UC.06 Informationen visualisieren
+tdm.tf.matrix.sum <- rowSums(as.matrix(tdm.tf.features.reducedby.tfidf))
+
+tdm.tf.matrix.sum.df <- data.frame(word=names(tdm.tf.matrix.sum),frequency=tdm.tf.matrix.sum)
+tdm.tf.matrix.sum.df <- tdm.tf.matrix.sum.df[order(tdm.tf.matrix.sum.df[,2], decreasing = T),]
+tdm.tf.matrix.sum.df$word <- factor(tdm.tf.matrix.sum.df$word, levels = unique(as.character(tdm.tf.matrix.sum.df$word)))
+
+topN.feature.value <- 50
+if (nrow(tdm.tf.matrix.sum.df) < topN.feature.value)  {topN.feature.value = nrow(tdm.tf.matrix.sum.df)}
+
+ggplot.all <- ggplot(tdm.tf.matrix.sum.df[1:topN.feature.value,], aes(x=reorder(word,+frequency),y=frequency)) +geom_bar(stat="identity", fill = 'darkred') +coord_flip() +theme_gdocs() +geom_text(aes(label=frequency), colour="white", hjust=1.25, size=3) +ggtitle("Features in the Corpus", subtitle = "Barplot for TopN-features reduced by statistical value (Var.1); tdm.tf.features.reducedby.tfidf") +ylab("total number by feature") +xlab("feature name") +theme(plot.title = element_text(size = 14), axis.title = element_text(size = 12), text = element_text(size = 10))
+ggplot.all
+
+# UC.07 Informationen austauschen
+ggsave(file = paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/pics/tdm.tf.features.reducedby.tfidf.topn_",cv,".pdf", sep = ""), plot = ggplot.all, dpi = 300)
+```
+
+## wordcloud visualisation of the features for the tdm.tfidf.features.reducedby.tfidf
+
+```{r}
+v <- sort(rowSums(tdm.tfidf.features.reducedby.tfidf.matrix), decreasing = T)
+df <- data.frame(word = names(v), freq = v)
+set.seed(1234)
+wordcloud(df$word, df$freq, scale = c(3.0,0.2), random.order = F, rot.per = 0.35, colors = brewer.pal(8, "Dark2"))
+```
+
+## tabular representation of the features for tdm.tfidf.features.reducedby.tfidf
+
+```{r}
+# UC.06 Informationen visualisieren
+tdm.tfidf.matrix.sum <- rowSums(as.matrix(tdm.tfidf.features.reducedby.tfidf))
+
+tdm.tfidf.matrix.sum.df <- data.frame(word=names(tdm.tfidf.matrix.sum),frequency=tdm.tfidf.matrix.sum)
+tdm.tfidf.matrix.sum.df <- tdm.tfidf.matrix.sum.df[order(tdm.tfidf.matrix.sum.df[,2], decreasing = T),]
+tdm.tfidf.matrix.sum.df$word <- factor(tdm.tfidf.matrix.sum.df$word, levels = unique(as.character(tdm.tfidf.matrix.sum.df$word)))
+
+topN.feature.value <- 50
+if (nrow(tdm.tfidf.matrix.sum.df) < topN.feature.value)  {topN.feature.value = nrow(tdm.tfidf.matrix.sum.df)}
+
+ggplot.all <- ggplot(tdm.tfidf.matrix.sum.df[1:topN.feature.value,], aes(x=reorder(word,+frequency),y=frequency)) +geom_bar(stat="identity", fill = 'darkred') +coord_flip() +theme_gdocs() +geom_text(aes(label=frequency), colour="white", hjust=1.25, size=3) +ggtitle("Features in the Corpus", subtitle = "Barplot for TopN-features reduced by statistical value (Var.1); tdm.tfidf.features.reducedby.tfidf") +ylab("total number by feature") +xlab("feature name") +theme(plot.title = element_text(size = 14), axis.title = element_text(size = 12), text = element_text(size = 10))
+ggplot.all
+
+# UC.07 Informationen austauschen
+ggsave(file = paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/pics/tdm.tfidf.features.reducedby.tfidf.topn_",cv,".pdf", sep = ""), plot = ggplot.all, dpi = 300)
+```
+
+## wordcloud visualisation of the features for the tdm.tf.features.reducedby.rst
+
+```{r}
+# visualize the tdm.tf.features.reducedby.rst.matrix
+rst.feature.freq.min <- 750
+v <- sort(rowSums(tdm.tf.features.reducedby.rst.matrix), decreasing = T)
+df <- data.frame(word = names(v), freq = v)
+set.seed(1234)
+wordcloud(df$word, df$freq, scale = c(3.0,0.2), random.order = F, rot.per = 0.35, colors = brewer.pal(8, "Dark2"), min.freq = rst.feature.freq.min)
+
+```
+
+## tabular representation of the features for tdm.tf.features.reducedby.rst
+
+```{r}
+# UC.06  Informationen visualisieren
+# specify the input data to be used
+tdm.tf.matrix.sum <- rowSums(tdm.tf.features.reducedby.rst.matrix)
+
+write.csv(tdm.tf.matrix.sum,file="~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/tdm.tf.matrix.sum.csv")
+
+tdm.tf.matrix.sum.df <- data.frame(word=names(tdm.tf.matrix.sum),frequency=tdm.tf.matrix.sum)
+tdm.tf.matrix.sum.df <- tdm.tf.matrix.sum.df[order(tdm.tf.matrix.sum.df[,2], decreasing = T),]
+tdm.tf.matrix.sum.df$word <- factor(tdm.tf.matrix.sum.df$word, levels = unique(as.character(tdm.tf.matrix.sum.df$word)))
+
+# set the amount of features to be included
+# topN.feature.value <- nrow(tdm.tf.matrix.sum.df)
+topN.feature.value <- 50
+if (nrow(tdm.tf.matrix.sum.df) < topN.feature.value)  {topN.feature.value = nrow(tdm.tf.matrix.sum.df)}
+
+ggplot.all <- ggplot(tdm.tf.matrix.sum.df[1:topN.feature.value,], aes(x=reorder(word,+frequency),y=frequency)) +geom_bar(stat="identity", fill = 'darkred') +coord_flip() +theme_gdocs() +geom_text(aes(label=frequency), colour="white", hjust=1.25, size=1.5) +ggtitle("Features in the Corpus", subtitle = paste("TopN-features reduced by tm::removeSparseTerms() (Var. 2); tdm.tf.features.reducedby.rst; sparsity-value: ",tdm.tf.sparsity.value.suggested,"; TopN-value:",topN.feature.value)) +ylab("total number by feature") +xlab("feature name") +theme(plot.title = element_text(size = 14), axis.title = element_text(size = 12), text = element_text(size = 6))
+ggplot.all
+
+# UC.07 Informationen austauschen
+ggsave(file = paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/pics/tdm.tf.features.reducedby.rst.matrix.topn_",cv,".pdf", sep = ""), plot = ggplot.all, dpi = 300)
+```
+## wordcloud visualisation of the features for the tdm.tfidf.features.reducedby.rst
+
+```{r}
+# visualize the tdm.tfidf.features.reducedby.rst.matrix
+rst.feature.freq.min <- 0.157
+v <- sort(rowSums(tdm.tfidf.features.reducedby.rst.matrix), decreasing = T)
+df <- data.frame(word = names(v), freq = v)
+set.seed(1234)
+wordcloud(df$word, df$freq, scale = c(3.0,0.2), random.order = F, rot.per = 0.35, colors = brewer.pal(8, "Dark2"), min.freq = rst.feature.freq.min)
+
+```
+
+## tabular representation of the features for tdm.tfidf.features.reducedby.rst
+
+```{r}
+# UC.06  Informationen visualisieren
+# specify the input data to be used
+tdm.tfidf.matrix.sum <- rowSums(tdm.tfidf.features.reducedby.rst.matrix)
+
+tdm.tfidf.matrix.sum.df <- data.frame(word=names(tdm.tfidf.matrix.sum),frequency=tdm.tfidf.matrix.sum)
+tdm.tfidf.matrix.sum.df <- tdm.tfidf.matrix.sum.df[order(tdm.tfidf.matrix.sum.df[,2], decreasing = T),]
+tdm.tfidf.matrix.sum.df$word <- factor(tdm.tfidf.matrix.sum.df$word, levels = unique(as.character(tdm.tfidf.matrix.sum.df$word)))
+
+# set the amount of features to be included
+# topN.feature.value <- nrow(tdm.tf.matrix.sum.df)
+topN.feature.value <- 50
+if (nrow(tdm.tfidf.matrix.sum.df) < topN.feature.value)  {topN.feature.value = nrow(tdm.tfidf.matrix.sum.df)}
+
+ggplot.all <- ggplot(tdm.tfidf.matrix.sum.df[1:topN.feature.value,], aes(x=reorder(word,+frequency),y=frequency)) +geom_bar(stat="identity", fill = 'darkred') +coord_flip() +theme_gdocs() +geom_text(aes(label=frequency), colour="white", hjust=1.25, size=1.5) +ggtitle("Features in the Corpus", subtitle = paste("TopN-features reduced by tm::removeSparseTerms() (Var. 2); tdm.tfidf.features.reducedby.rst; sparsity-value: ",tdm.tf.sparsity.value.suggested,"; TopN-value:",topN.feature.value)) +ylab("total number by feature") +xlab("feature name") +theme(plot.title = element_text(size = 14), axis.title = element_text(size = 12), text = element_text(size = 6))
+ggplot.all
+
+# UC.07 Informationen austauschen
+ggsave(file = paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/pics/tdm.tfidf.features.reducedby.rst.matrix.topn_",cv,".pdf", sep = ""), plot = ggplot.all, dpi = 300)
+```
+
+# UC.03 Parameter der Zusammenhangs-Analyse festlegen (estimate and evaluate the number of clusters)
+## function to evaluate the amount of clusters
+```{r}
+do.cluster_eval <- function(input_list) {
+  
+  set.seed(1234)
+  cluster.eval.max.cnt <- 15
+  cluster.eval.nboot <- 500
+  cluster.cnt.ex_ante <- 2
+  max.nc <- cluster.eval.max.cnt
+  nstart <- 25
+  B.value <- 10
+  min.nc = 2
+  
+  for (item in 1:length(input_list)) {
+    
+    # elbow method, fviz_nbclust function, kmeans
+    fviz_nbclust.elbow.kmeans.wss <- fviz_nbclust(t(tdm.list[[item]]$matrix), kmeans, method = "wss", k.max = cluster.eval.max.cnt, nboot = cluster.eval.nboot)
+    fviz_nbclust.elbow.kmeans.wss <- fviz_nbclust.elbow.kmeans.wss +geom_vline(xintercept = cluster.cnt.ex_ante, linetype = 2) +labs(title = "Evaluation of the optimal number of clusters", subtitle = paste("Elbow method; ",tdm.list[[item]]$name,"; kmeans; WSS", sep = ""))
+    
+    temp <- list(elbow = fviz_nbclust.elbow.kmeans.wss)
+    input_list[[item]]$eval <- append(input_list[[item]]$eval, temp)
+    
+    ## silhouette method, fviz_nbclust function, kmeans
+    fviz_nbclust.silhouette.kmeans <- fviz_nbclust(t(tdm.list[[item]]$matrix), kmeans, method = "silhouette", k.max = cluster.eval.max.cnt, nboot = cluster.eval.nboot)
+      fviz_nbclust.silhouette.kmeans <- fviz_nbclust.silhouette.kmeans +geom_vline(xintercept = cluster.cnt.ex_ante, linetype = 2) +labs(title = "Evaluation of the optimal number of clusters", subtitle = paste("Silhouette method; ", tdm.list[[item]]$name,"; kmeans; silhouette", sep = ""))
+    
+    temp <- list(silhouette = fviz_nbclust.silhouette.kmeans)
+    input_list[[item]]$eval$silhouette <- append(input_list[[item]]$eval$silhouette, temp)
+    
+    ## gap statistic method, fviz_nbclust function, kmeans
+     fviz_nbclust.gapstat.kmeans <- fviz_nbclust(t(tdm.list[[item]]$matrix), kmeans, method = "gap_stat", nboot = cluster.eval.nboot, nstart = 25, k.max = cluster.eval.max.cnt)
+     fviz_nbclust.gapstat.kmeans <- fviz_nbclust.gapstat.kmeans +labs(title = "Evaluation of the optimal number of clusters", subtitle = paste("Gap statistic method; ",tdm.list[[item]]$name,"; kmeans; gap statistic", sep = ""))
+
+    temp <- list(gapstat = fviz_nbclust.gapstat.kmeans)
+    input_list[[item]]$eval$gapstat <- append(input_list[[item]]$eval$gapstat, temp)
+    
+    # gap statistic method, clusGap function, kmedoids
+     clusGapStat.pam <- clusGap(t(tdm.list[[item]]$matrix), FUN = pam, nstart = nstart, K.max = cluster.eval.max.cnt, B = B.value)
+     clusGapStat.pam.ggplot <- fviz_gap_stat(clusGapStat.pam)
+     clusGapStat.pam.ggplot <- clusGapStat.pam.ggplot +labs(title = "Evaluation of the optimal number of clusters", subtitle = paste("Gap statistic method; ", tdm.list[[item]]$name,"; kmedoids/pam; gap statistic", sep = ""))
+
+    temp <- list(gapstat = clusGapStat.pam, ggplot = clusGapStat.pam.ggplot)
+    input_list[[item]]$eval$gapstat_pam <- append(input_list[[item]]$eval$gapstat_pam, temp)
+    
+    # gap statistic method, clusGap function, hierarchical clustering
+     clusGap.hcut <- clusGap(t(tdm.list[[item]]$matrix), FUN = hcut, K.max = cluster.eval.max.cnt, B = B.value)
+     clusGap.hcut.ggplot <- fviz_gap_stat(clusGap.hcut)
+     clusGap.hcut.ggplot <- clusGap.hcut.ggplot +labs(title = "Evaluation of the optimal number of clusters", subtitle = paste("Hierarchical clustering; ",tdm.list[[item]]$name, sep = ""))
+
+    temp <- list(gapstat.hcut = clusGap.hcut, ggplot.hcut = clusGap.hcut.ggplot)
+    input_list[[item]]$eval$gapstat_hcut <- append(input_list[[item]]$eval$gapstat_hcut, temp)
+    
+    # NbClust package, euclidean distance, kmeans
+    
+    if (item==1|item==3) {
+      NbClust.euclidean.kmeans <- NbClust(t(tdm.list[[item]]$matrix), diss = NULL, distance = "euclidean", min.nc = min.nc, max.nc, method = "kmeans")
+      NbClust.euclidean.kmeans.histogram <- ggplot(as.data.frame(NbClust.euclidean.kmeans$Best.nc[1,]), aes(x=NbClust.euclidean.kmeans$Best.nc[1, ])) +geom_histogram(binwidth = 0.5) +scale_x_continuous(breaks = seq(0,max.nc,by=1)) +scale_y_continuous(breaks = seq(0,10,by=1)) +ggtitle("Evaluation of the optimal number of clusters", subtitle = paste("NbClust package; ", tdm.list[[item]]$name,"; euclidean distance; kmeans", sep = "")) +ylab("amount of indices proposing best number of clusters") +xlab("proposed best number of Clusters k")
+      
+      temp <- list(NbClust = NbClust.euclidean.kmeans, ggplot = NbClust.euclidean.kmeans.histogram)
+      input_list[[item]]$eval$nbclust <- append(input_list[[item]]$eval$nbclust, temp)
+      
+    } else {
+      
+      temp <- NA
+      input_list[[item]]$eval$nbclust <- append(input_list[[item]]$eval$nbclust, temp)
+      
+    }
+  }
+  return(input_list)
+}
+```
+
+## evaluate the cluster count
+```{r}
+tdm.list <- do.cluster_eval(tdm.list)
+```
+
+## display the results of the evaluation
+```{r}
+
+for (item in 1:length(tdm.list)) {
+  
+  for (ggplot in 1:length(tdm.list[[item]]$eval)) {
+    print(tdm.list[[item]]$eval[[ggplot]])
+  }
+}
+```
+
+## manual evaluation of cluster count based on previous results
+```{r}
+## elbow method, fviz_nbclust function, kmeans
+dtm.tf.features.reducedby.tfidf.fviz_nbclust.elbow.kmeans.wss.clust_cnt <- 2
+dtm.tf.features.reducedby.rst.fviz_nbclust.elbow.kmeans.wss.clust_cnt <- 2
+dtm.tfidf.features.reducedby.tfidf.fviz_nbclust.elbow.kmeans.wss.clust_cnt <- 3
+dtm.tfidf.features.reducedby.rst.fviz_nbclust.elbow.kmeans.wss.clust_cnt <- 2
+
+## silhouette method, fviz_nbclust function, kmeans
+dtm.tf.features.reducedby.tfidf.fviz_nbclust.silhouette.kmeans.wss.clust_cnt <- 2
+dtm.tf.features.reducedby.rst.fviz_nbclust.silhouette.kmeans.wss.clust_cnt <- 2
+dtm.tfidf.features.reducedby.tfidf.fviz_nbclust.silhouette.kmeans.wss.clust_cnt <- 3
+dtm.tfidf.features.reducedby.rst.fviz_nbclust.silhouette.kmeans.wss.clust_cnt <- 2
+
+## gap statistic method, fviz_nbclust function, kmeans
+dtm.tf.features.reducedby.tfidf.fviz_nbclust.gapstat.kmeans.clust_cnt <- 7
+dtm.tf.features.reducedby.rst.fviz_nbclust.gapstat.kmeans.clust_cnt <- 12
+dtm.tfidf.features.reducedby.tfidf.fviz_nbclust.gapstat.kmeans.clust_cnt <- 4
+dtm.tfidf.features.reducedby.rst.fviz_nbclust.gapstat.kmeans.clust_cnt <- NA
+
+## gap statistic method, clusGap function, kmedoids
+dtm.tf.features.reducedby.tfidf.clusGapStat.pam.clust_cnt <- 3
+dtm.tf.features.reducedby.rst.clusGapStat.pam.clust_cnt <- 6
+dtm.tfidf.features.reducedby.tfidf.clusGapStat.pam.clust_cnt <- 5
+dtm.tfidf.features.reducedby.rst.clusGapStat.pam.clust_cnt <- NA
+
+## gap statistic method, clusGap function, hierarchical clustering
+dtm.tf.features.reducedby.tfidf.clusGap.hcut.ggplot.clust_cnt <- 3
+dtm.tf.features.reducedby.rst.clusGap.hcut.ggplot.clust_cnt <- 2
+dtm.tfidf.features.reducedby.tfidf.clusGap.hcut.ggplot.clust_cnt <- 5
+dtm.tfidf.features.reducedby.rst.clusGap.hcut.ggplot.clust_cnt <- NA
+
+## NbClust package, euclidean distance, kmeans
+dtm.tf.features.reducedby.tfidf.NbClust.euclidean.kmeans.clust_cnt <- 2
+dtm.tf.features.reducedby.rst.NbClust.euclidean.kmeans.clust_cnt <- NA
+dtm.tfidf.features.reducedby.tfidf.NbClust.euclidean.kmeans.clust_cnt <- 3
+dtm.tfidf.features.reducedby.rst.NbClust.euclidean.kmeans.clust_cnt <- NA
+```
+
+## results from the evaluation of the optimal number of clusters
+```{r}
+dtm.tf.features.reducedby.tfidf.cluster.eval.results <- data.frame(tf_tfidf = c( dtm.tf.features.reducedby.tfidf.fviz_nbclust.elbow.kmeans.wss.clust_cnt, dtm.tf.features.reducedby.tfidf.fviz_nbclust.silhouette.kmeans.wss.clust_cnt, dtm.tf.features.reducedby.tfidf.fviz_nbclust.gapstat.kmeans.clust_cnt, dtm.tf.features.reducedby.tfidf.clusGapStat.pam.clust_cnt, dtm.tf.features.reducedby.tfidf.clusGap.hcut.ggplot.clust_cnt, dtm.tf.features.reducedby.tfidf.NbClust.euclidean.kmeans.clust_cnt))
+
+dtm.tf.features.reducedby.rst.cluster.eval.results <- data.frame(tf_rst = c( dtm.tf.features.reducedby.rst.fviz_nbclust.elbow.kmeans.wss.clust_cnt, dtm.tf.features.reducedby.rst.fviz_nbclust.silhouette.kmeans.wss.clust_cnt, dtm.tf.features.reducedby.rst.fviz_nbclust.gapstat.kmeans.clust_cnt, dtm.tf.features.reducedby.rst.clusGapStat.pam.clust_cnt, dtm.tf.features.reducedby.rst.clusGap.hcut.ggplot.clust_cnt, dtm.tf.features.reducedby.rst.NbClust.euclidean.kmeans.clust_cnt))
+
+dtm.tfidf.features.reducedby.tfidf.cluster.eval.results <- data.frame(tfidf_tfidf = c( dtm.tfidf.features.reducedby.tfidf.fviz_nbclust.elbow.kmeans.wss.clust_cnt, dtm.tfidf.features.reducedby.tfidf.fviz_nbclust.silhouette.kmeans.wss.clust_cnt, dtm.tfidf.features.reducedby.tfidf.fviz_nbclust.gapstat.kmeans.clust_cnt, dtm.tfidf.features.reducedby.tfidf.clusGapStat.pam.clust_cnt, dtm.tfidf.features.reducedby.tfidf.clusGap.hcut.ggplot.clust_cnt, dtm.tfidf.features.reducedby.tfidf.NbClust.euclidean.kmeans.clust_cnt))
+  
+dtm.tfidf.features.reducedby.rst.cluster.eval.results <- data.frame(tfidf_rst = c( dtm.tfidf.features.reducedby.rst.fviz_nbclust.elbow.kmeans.wss.clust_cnt, dtm.tfidf.features.reducedby.rst.fviz_nbclust.silhouette.kmeans.wss.clust_cnt, dtm.tfidf.features.reducedby.rst.fviz_nbclust.gapstat.kmeans.clust_cnt, dtm.tfidf.features.reducedby.rst.clusGapStat.pam.clust_cnt, dtm.tfidf.features.reducedby.rst.clusGap.hcut.ggplot.clust_cnt, dtm.tfidf.features.reducedby.rst.NbClust.euclidean.kmeans.clust_cnt))
+
+dtm.cluster.eval.results <- cbind(dtm.tf.features.reducedby.tfidf.cluster.eval.results,dtm.tf.features.reducedby.rst.cluster.eval.results,dtm.tfidf.features.reducedby.tfidf.cluster.eval.results,dtm.tfidf.features.reducedby.rst.cluster.eval.results)
+
+# UC.06 Informationen visualisieren
+row.names(dtm.cluster.eval.results) <- c("elbow.kmeans.wss","silhouette.kmeans.wss","gapstat.kmeans","clusGapStat.kmedoids","clusGap.hcut","NbClust.euclidean.kmeans")
+dtm.cluster.eval.results.summary.list <- apply(dtm.cluster.eval.results,1,summary)
+dtm.cluster.eval.results.summary.df <- as.data.frame(do.call(rbind, dtm.cluster.eval.results.summary.list))
+dtm.cluster.eval.results
+summary(t(dtm.cluster.eval.results))
+
+# UC.07 Informationen austauschen
+# uc03_xlsx_list <- append(uc03_xlsx_list, list(cluster.eval.results = dtm.cluster.eval.results))
+# uc07_data(dtm.cluster.eval.results,"xlsx",F)
+# write.xlsx(dtm.cluster.eval.results, paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/dtm.cluster.eval.results_",cv,".xlsx", sep=""))
+
+# uc03_xlsx_list <- append(uc03_xlsx_list, list(cluster.eval.results.summary = dtm.cluster.eval.results.summary.df))
+# uc07_data(dtm.cluster.eval.results.summary.df,"xlsx",F)
+# write.xlsx(dtm.cluster.eval.results.summary.df, paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/dtm.cluster.eval.results.summary_",cv,".xlsx", sep=""))
+
+```
+
+## definition (manual) of the optimal cluster count by result interpretation
+```{r}
+cluster.cnt.overall <- 2
+cc <- cluster.cnt.overall
+
+# cosine similarity
+tdm.tf.features.reducedby.cosine.sim.dist.hclust.cluster.cnt <- cluster.cnt.overall
+
+tdm.tf.features.reducedby.tfidf.cosine.sim.dist.hclust.cluster_cnt <- tdm.tf.features.reducedby.cosine.sim.dist.hclust.cluster.cnt
+tdm.tf.features.reducedby.rst.cosine.sim.dist.hclust.cluster_cnt <- tdm.tf.features.reducedby.cosine.sim.dist.hclust.cluster.cnt
+tdm.tfidf.features.reducedby.tfidf.cosine.sim.dist.hclust.cluster_cnt <- tdm.tf.features.reducedby.cosine.sim.dist.hclust.cluster.cnt
+tdm.tfidf.features.reducedby.rst.cosine.sim.dist.hclust.cluster_cnt <- tdm.tf.features.reducedby.cosine.sim.dist.hclust.cluster.cnt
+
+# kmeans
+
+dtm.tf.features.reducedby.kmeans.cluster.cnt <- cluster.cnt.overall
+
+dtm.tf.features.reducedby.tfidf.matrix.df.kmeans.cluster_cnt <- dtm.tf.features.reducedby.kmeans.cluster.cnt
+dtm.tf.features.reducedby.rst.matrix.df.kmeans.cluster_cnt <- dtm.tf.features.reducedby.kmeans.cluster.cnt
+dtm.tfidf.features.reducedby.tfidf.matrix.df.kmeans.cluster_cnt <- dtm.tf.features.reducedby.kmeans.cluster.cnt
+dtm.tfidf.features.reducedby.rst.matrix.df.kmeans.cluster_cnt <- dtm.tf.features.reducedby.kmeans.cluster.cnt
+
+# kmedoids
+
+dtm.tf.features.reducedby.kmedoids.cluster.cnt <- cluster.cnt.overall
+
+dtm.tf.features.reducedby.tfidf.matrix.df.kmedoids.cluster_cnt <- dtm.tf.features.reducedby.kmedoids.cluster.cnt
+dtm.tf.features.reducedby.rst.matrix.df.kmedoids.cluster_cnt <- dtm.tf.features.reducedby.kmedoids.cluster.cnt
+dtm.tfidf.features.reducedby.tfidf.matrix.df.kmedoids.cluster_cnt <- dtm.tf.features.reducedby.kmedoids.cluster.cnt
+dtm.tfidf.features.reducedby.rst.matrix.df.kmedoids.cluster_cnt <- dtm.tf.features.reducedby.kmedoids.cluster.cnt
+
+# lsa, kmeans
+
+tdm.tf.features.reducedby.myLSAspace.kmeans.cluster_cnt <- cluster.cnt.overall
+
+tdm.tf.features.reducedby.tfidf.myLSAspace.kmeans.cluster_cnt <- tdm.tf.features.reducedby.myLSAspace.kmeans.cluster_cnt
+tdm.tf.features.reducedby.rst.myLSAspace.kmeans.cluster_cnt <- tdm.tf.features.reducedby.myLSAspace.kmeans.cluster_cnt
+tdm.tfidf.features.reducedby.tfidf.myLSAspace.kmeans.cluster_cnt <- tdm.tf.features.reducedby.myLSAspace.kmeans.cluster_cnt
+tdm.tfidf.features.reducedby.rst.myLSAspace.kmeans.cluster_cnt <- tdm.tf.features.reducedby.myLSAspace.kmeans.cluster_cnt
+
+# lsa, cosine
+
+tdm.tf.features.reducedby.myLSAspace.lsaMatrix.cosine.dist.hclust.cluster_cnt <- cluster.cnt.overall
+
+tdm.tf.features.reducedby.tfidf.myLSAspace.lsaMatrix.cosine.dist.hclust.cluster_cnt <- tdm.tf.features.reducedby.myLSAspace.lsaMatrix.cosine.dist.hclust.cluster_cnt
+tdm.tf.features.reducedby.rst.myLSAspace.lsaMatrix.cosine.dist.hclust.cluster_cnt <- tdm.tf.features.reducedby.myLSAspace.lsaMatrix.cosine.dist.hclust.cluster_cnt
+tdm.tfidf.features.reducedby.tfidf.myLSAspace.lsaMatrix.cosine.dist.hclust.cluster_cnt <- tdm.tf.features.reducedby.myLSAspace.lsaMatrix.cosine.dist.hclust.cluster_cnt
+tdm.tfidf.features.reducedby.rst.myLSAspace.lsaMatrix.cosine.dist.hclust.cluster_cnt <- tdm.tf.features.reducedby.myLSAspace.lsaMatrix.cosine.dist.hclust.cluster_cnt
+
+# set the color palette for the fviz_dend function
+fviz_dend.color.palette = c("black","blue")
+```
+
+# UC.04 Zusammenhangs-Analyse durchführen
+## definition area
+
+## function for cluster tendency
+```{r}
+do.cluster_tendency <- function(input_list){
+  
+    for (item in 1:length(input_list)) {
+      
+  gct_tdm <- get_clust_tendency(input_list[[item]]$matrix, nrow(input_list[[item]]$matrix)-1, seed = 1234)
+  gct_lsa <- get_clust_tendency(input_list[[item]]$lsa$space$dk, nrow(input_list[[item]]$lsa$space$dk)-1, seed = 1234)  
+  gct_lda <- get_clust_tendency(input_list[[item]]$lda$space[["Gibbs"]]@gamma, nrow(input_list[[item]]$lda$space[["Gibbs"]]@gamma)-1, seed = 1234) 
+
+  temp <- list(gct = gct_tdm)
+  input_list[[item]]$gct <- append(input_list[[item]]$gct, temp)
+  
+  temp_lsa <- list(gct = gct_lsa)
+  input_list[[item]]$lsa <- append(input_list[[item]]$lsa, temp_lsa)
+  
+  temp_lda <- list(gct = gct_lda)
+  input_list[[item]]$lda <- append(input_list[[item]]$lda, temp_lda)
+  
+    }
+  return(input_list)
+}
+```
+
+## function for cosine similarity
+```{r}
+do.cosine <- function(input_list) {
+
+  for (item in 1:length(input_list)) {
+    
+  cosine <- cosine(input_list[[item]]$matrix)
+  cosine[is.na(cosine)] <- 0
+  cosine.dist <- dist(cosine)
+  cosine.hclust <- hclust(cosine.dist, method = "ward.D")
+  
+  p <- plot(cosine.hclust)
+  cosine.sim.dist.hclust.alloc <- rect.hclust(cosine.hclust, k = input_list[[item]]$cc, border = "red")
+  ggplot <- fviz_dend(cosine.hclust, rect_lty = 1, lwd = 0.2, rect = T , k = input_list[[item]]$cc, cex = 0.2, ggtheme = theme_classic(), palette = fviz_dend.color.palette)
+
+ggplot <- ggplot +ggtitle("Determination of cluster members", subtitle = paste("Cluster dendrogram; ", input_list[[item]]$name,"; cosine distance; ward.D; k =", input_list[[item]]$cc)) +xlab("Documents in the Corpus")
+  
+cosine.sim.dist.hclust.alloc.df <- data.frame()
+
+for (clusterno in 1:length(cosine.sim.dist.hclust.alloc)) {
+  df.temp <- as.data.frame(cosine.sim.dist.hclust.alloc[[clusterno]])
+  df1.temp <- data.frame(rep(clusterno,times=length(cosine.sim.dist.hclust.alloc[[clusterno]])))
+  df.temp <- cbind(df.temp,df1.temp)
+  colnames(df.temp) <- c("corpus_item","cluster_number")
+  cosine.sim.dist.hclust.alloc.df <- rbind(cosine.sim.dist.hclust.alloc.df,df.temp)
+}
+
+  temp <- list(dist = cosine.dist, hclust = cosine.hclust, hclust.alloc = cosine.sim.dist.hclust.alloc.df, plot = p, ggplot = ggplot)
+  input_list[[item]]$cosine <- append(input_list[[item]]$cosine, temp)
+  
+  }
+  return(input_list)
+}
+```
+
+## function for kmeans and kmedoids based clustering
+```{r}
+do.kmeans_pam <- function(input_list) {
+  
+  nstart = 25
+
+  for (item in 1:length(input_list)) {
+    
+    kmeans <- kmeans(t(input_list[[item]]$matrix), input_list[[item]]$cc, nstart = nstart)
+    pam <- pam(t(input_list[[item]]$matrix), input_list[[item]]$cc, nstart = nstart)
+    
+    ggplot_kmeans <- fviz_cluster(kmeans, t(input_list[[item]]$matrix)) +ggtitle("Determination of cluster members", subtitle = paste("Cluster plot; ", input_list[[item]]$name,"; kmeans; k =", input_list[[item]]$cluster_cnt))
+    ggplot_pam <- fviz_cluster(pam, t(input_list[[item]]$matrix)) +ggtitle("Determination of cluster members", subtitle = paste("Cluster plot; ", input_list[[item]]$name,"; kmedoids; k =", input_list[[item]]$cc))
+    
+  temp_kmeans <- list(result = kmeans, ggplot = ggplot_kmeans)
+  input_list[[item]]$kmeans <- append(input_list[[item]]$kmeans, temp_kmeans)
+  
+  temp_kmedoids <- list(result = pam, ggplot = ggplot_pam)
+  input_list[[item]]$kmedoids <- append(input_list[[item]]$kmedoids, temp_kmedoids)
+  
+  }
+  return(input_list)
+}
+```
+
+## function to create the latent spaces for lsa and lda
+```{r}
+do.latent_spaces <- function(input_list) {
+
+  # lsa definitions
+  
+  # lda definitions
+  lda.gibbs.burnin <- 4000 # 1000
+  lda.gibbs.iter <- 2000 # 1000
+  lda.gibbs.thin <- 500 # 100
+  lda.gibbs.nstart <- 5
+  lda.gibbs.best <- T
+  lda.topics <- cluster.cnt.overall
+  lda.seed <- list(2003,5,63,100001,765)
+
+  ## The five most frequent terms for each topic are obtained by
+  most.frequent.topic.cont <- 5
+  most.frequent.term.cnt <- cluster.cnt.overall
+  
+  for (item in 1:length(input_list)) {
+    
+    # lsa
+    lsa <- lsa(input_list[[item]]$matrix, dims = dimcalc_share())
+    temp_lsa <- list(space = lsa)
+    input_list[[item]]$lsa <- append(input_list[[item]]$lsa, temp_lsa)
+  
+    #lda
+    
+        lda = list(Gibbs = LDA(input_list[[item]]$dtm, k = lda.topics, method = "Gibbs", control = list(nstart = lda.gibbs.nstart, seed = lda.seed, burnin = lda.gibbs.burnin, thin = lda.gibbs.thin, iter = lda.gibbs.iter)))
+    
+    # lda = list(VEM = LDA(input_list[[item]]$dtm, k = lda.topics, control = list(seed = lda.seed)), VEM_fixed = LDA(input_list[[item]]$dtm, k = lda.topics, control = list(estimate.alpha = F, seed = lda.seed)), Gibbs = LDA(input_list[[item]]$dtm, k = lda.topics, method = "Gibbs", control = list(nstart = lda.gibbs.nstart, seed = lda.seed, burnin = lda.gibbs.burnin, thin = lda.gibbs.thin, iter = lda.gibbs.iter)), CTM = CTM(input_list[[item]]$dtm, k = lda.topics, control = list(seed = lda.seed, var = list(tol = 10^-4), em = list(tol = 10^-3))))
+    
+    temp_lda <- list(space = lda)
+    input_list[[item]]$lda <- append(input_list[[item]]$lda, temp_lda)
+    
+  }
+  return(input_list)
+}
+```
+
+```{r}
+# previous version
+
+# dtm.tf.features.reducedby.tfidf.lda.results = list(VEM = LDA(dtm.tf.features.reducedby.tfidf, k = lda.topics, control = list(seed = lda.seed)), VEM_fixed = LDA(dtm.tf.features.reducedby.tfidf, k = lda.topics, control = list(estimate.alpha = F, seed = lda.seed)), Gibbs = LDA(dtm.tf.features.reducedby.tfidf, k = lda.topics, method = "Gibbs", control = list(nstart = lda.gibbs.nstart, seed = lda.seed, burnin = lda.gibbs.burnin, thin = lda.gibbs.thin, iter = lda.gibbs.iter)), CTM = CTM(dtm.tf.features.reducedby.tfidf, k = lda.topics, control = list(seed = lda.seed, var = list(tol = 10^-4), em = list(tol = 10^-3))))
+# 
+# dtm.tf.features.reducedby.rst.lda.results = list(VEM = LDA(dtm.tf.features.reducedby.rst, k = lda.topics, control = list(seed = lda.seed)), VEM_fixed = LDA(dtm.tf.features.reducedby.rst, k = lda.topics, control = list(estimate.alpha = F, seed = lda.seed)), Gibbs = LDA(dtm.tf.features.reducedby.rst, k = lda.topics, method = "Gibbs", control = list(nstart = lda.gibbs.nstart, seed = lda.seed, burnin = lda.gibbs.burnin, thin = lda.gibbs.thin, iter = lda.gibbs.iter)), CTM = CTM(dtm.tf.features.reducedby.rst, k = lda.topics, control = list(seed = lda.seed, var = list(tol = 10^-4), em = list(tol = 10^-3))))
+# 
+# dtm.tfidf.features.reducedby.tfidf.lda.results = list(VEM = LDA(dtm.tfidf.features.reducedby.tfidf, k = lda.topics, control = list(seed = lda.seed)), VEM_fixed = LDA(dtm.tfidf.features.reducedby.tfidf, k = lda.topics, control = list(estimate.alpha = F, seed = lda.seed)), Gibbs = LDA(dtm.tfidf.features.reducedby.tfidf, k = lda.topics, method = "Gibbs", control = list(nstart = lda.gibbs.nstart, seed = lda.seed, burnin = lda.gibbs.burnin, thin = lda.gibbs.thin, iter = lda.gibbs.iter)), CTM = CTM(dtm.tfidf.features.reducedby.tfidf, k = lda.topics, control = list(seed = lda.seed, var = list(tol = 10^-4), em = list(tol = 10^-3))))
+# 
+# dtm.tfidf.features.reducedby.rst.lda.results = list(VEM = LDA(dtm.tfidf.features.reducedby.rst, k = lda.topics, control = list(seed = lda.seed)), VEM_fixed = LDA(dtm.tfidf.features.reducedby.rst, k = lda.topics, control = list(estimate.alpha = F, seed = lda.seed)), Gibbs = LDA(dtm.tfidf.features.reducedby.rst, k = lda.topics, method = "Gibbs", control = list(nstart = lda.gibbs.nstart, seed = lda.seed, burnin = lda.gibbs.burnin, thin = lda.gibbs.thin, iter = lda.gibbs.iter)), CTM = CTM(dtm.tfidf.features.reducedby.rst, k = lda.topics, control = list(seed = lda.seed, var = list(tol = 10^-4), em = list(tol = 10^-3))))
+
+```
+
+## function for lsa-kmeans based clustering
+```{r}
+do.lsa_kmeans <- function(input_list) {
+  
+  nstart = 25
+
+  for (item in 1:length(input_list)) {
+    
+    kmeans <- kmeans(input_list[[item]]$lsa$space$dk, input_list[[item]]$cc, nstart = nstart)
+    
+    ggplot <- fviz_cluster(kmeans, data = t(input_list[[item]]$matrix)) +ggtitle("Determination of cluster members", subtitle = paste("Cluster plot; ", input_list[[item]]$name,"; LSA; kmeans; k =", input_list[[item]]$cc))
+
+  temp <- list(result = kmeans, ggplot = ggplot)
+  input_list[[item]]$lsa_kmeans <- append(input_list[[item]]$lsa_kmeans, temp)
+  
+  }
+  return(input_list)
+}
+```
+
+## function for lsa-cosine based clustering
+```{r}
+do.lsa_cosine <- function(input_list) {
+
+  for (item in 1:length(input_list)) {
+    
+    lsa_matrix <- diag(input_list[[item]]$lsa$space$sk) %*% t(input_list[[item]]$lsa$space$dk)
+    cosine <- 1 - cosine(lsa_matrix)
+    cosine[is.na(cosine)] <- 0
+    cosine.dist <- dist(cosine)
+    cosine.hclust <- hclust(cosine.dist, method = "ward.D")
+    
+    p <- plot(cosine.hclust)
+    
+    cosine.sim.dist.hclust.alloc <- rect.hclust(cosine.hclust, k = input_list[[item]]$cc, border = "red")
+    
+    ggplot <- fviz_dend(cosine.hclust, rect_lty = 1, lwd = 0.2, rect = T , k = input_list[[item]]$cc, cex = 0.2, ggtheme = theme_classic(), palette = fviz_dend.color.palette)
+    
+    ggplot <- ggplot +ggtitle("Determination of cluster members", subtitle = paste("Cluster dendrogram; ", input_list[[item]]$name,"; LSA; cosine; ward.D; k =", input_list[[item]]$cc)) +xlab("Documents in the Corpus")
+    
+    cosine.sim.dist.hclust.alloc.df <- data.frame()
+
+for (clusterno in 1:length(cosine.sim.dist.hclust.alloc)) {
+  df.temp <- as.data.frame(cosine.sim.dist.hclust.alloc[[clusterno]])
+  df1.temp <- data.frame(rep(clusterno,times=length(cosine.sim.dist.hclust.alloc[[clusterno]])))
+  df.temp <- cbind(df.temp,df1.temp)
+  colnames(df.temp) <- c("corpus_item","cluster_number")
+  cosine.sim.dist.hclust.alloc.df <- rbind(cosine.sim.dist.hclust.alloc.df,df.temp)
+}
+
+  temp <- list(dist = cosine.dist, hclust = cosine.hclust, hclust.alloc = cosine.sim.dist.hclust.alloc.df, plot = p, ggplot = ggplot)
+  input_list[[item]]$lsa_cosine <- append(input_list[[item]]$lsa_cosine, temp)
+  
+  }
+  return(input_list)
+}
+```
+
+## function to determine the items to be removed
+```{r}
+
+get_docs_removed <- function(input_list) {
+  
+  for (item in 1:length(input_list)) {
+    
+    row.sum <- apply(input_list[[item]]$dtm, 1, FUN = sum)
+    
+    entry.removed <- input_list[[item]]$dtm[row.sum == 0,]$dimnames$Docs
+    removed_items <- c(removed_items,entry.removed)
+    print(entry.removed)
+    
+    input_list[[item]]$dtm <- input_list[[item]]$dtm[row.sum != 0,]
+    temp <- list(removed = entry.removed)
+    input_list[[item]]$doc <- append(input_list[[item]]$doc, temp)
+    
+  }
+  
+  return(input_list)
+}
+
+```
+
+```{r}
+removed_items <- c("")
+tdm.list <- get_docs_removed(tdm.list)
+
+# entry.removed <- "sa43404.pdf"
+
+# entry.removed <- c()
+# 
+# for (item in 1:length(tdm.list)) {
+#   
+#   entry.removed <- c(entry.removed, tdm.list[[item]]$doc$removed)
+# }
+
+```
+
+## function for lda-topic and kmeans based clustering
+```{r}
+do.lda_cluster <- function(input_list) {
+  
+  lda.topic.entropy.selector = "Gibbs"
+  nstart = 25
+
+  for (item in 1:length(input_list)) {
+    
+    topic <- as.data.frame(topics(input_list[[item]]$lda$space[[lda.topic.entropy.selector]],1))
+    
+    set.seed(1234)
+    kmeans <- kmeans(input_list[[item]]$lda$space[[lda.topic.entropy.selector]]@gamma, input_list[[item]]$cc, nstart = nstart)
+
+    ggplot_kmeans <- fviz_cluster(kmeans, data = input_list[[item]]$dtm, na.rm = T) +ggtitle("Determination of cluster members", subtitle = paste("Cluster plot; ", input_list[[item]]$name,"; LDA with kmeans; k =", input_list[[item]]$cc))
+
+   clus <- cbind(topic, kmeans$cluster)
+   colnames(clus) <- c("lda_topic_cluster","lda_kmeans_cluster")
+   
+   temp_topic <- list(result = topic, clus = clus)
+   input_list[[item]]$lda_topic <- append(input_list[[item]]$lda_topic, temp_topic)
+   
+   temp_kmeans <- list(result = kmeans, clus = clus, ggplot = ggplot_kmeans)
+   input_list[[item]]$lda_kmeans <- append(input_list[[item]]$lda_kmeans, temp_kmeans)
+  
+  }
+  return(input_list)
+}
+```
+
+## create the latent spaces for lsa and lda
+```{r}
+tdm.list <- do.latent_spaces(tdm.list)
+```
+
+## determine the cluster tendency
+```{r}
+tdm.list <- do.cluster_tendency(tdm.list)
+
+gct.tdm <- data.frame(TDM_ClusterTendency = c(tdm.list[[1]]$gct$gct$hopkins_stat,tdm.list[[2]]$gct$gct$hopkins_stat,tdm.list[[3]]$gct$gct$hopkins_stat,tdm.list[[4]]$gct$gct$hopkins_stat), row.names = c("tf_tfidf","tf_rst","tfidf_tfidf","tfidf_rst"))
+gct.tdm <- t(gct.tdm)
+
+gct.lsa <- data.frame(LSA_ClusterTendency = c(tdm.list[[1]]$lsa$gct$hopkins_stat,tdm.list[[2]]$lsa$gct$hopkins_stat,tdm.list[[3]]$lsa$gct$hopkins_stat,tdm.list[[4]]$lsa$gct$hopkins_stat), row.names = c("tf_tfidf","tf_rst","tfidf_tfidf","tfidf_rst"))
+gct.lsa <- t(gct.lsa)
+
+gct.lda <- data.frame(LDA_ClusterTendency = c(tdm.list[[1]]$lda$gct$hopkins_stat,tdm.list[[2]]$lda$gct$hopkins_stat,tdm.list[[3]]$lda$gct$hopkins_stat,tdm.list[[4]]$lda$gct$hopkins_stat), row.names = c("tf_tfidf","tf_rst","tfidf_tfidf","tfidf_rst"))
+gct.lda <- t(gct.lda)
+
+gct <- gct.tdm
+gct <- rbind(gct, gct.lsa)
+gct <- rbind(gct, gct.lda)
+gct
+```
+
+
+## function to calculate the lda entropy
+```{r}
+get_lda_entropy <- function(input_list){
+  
+  
+  for (item in 1:length(tdm.list)) {
+    
+    lda.entropy <- sapply(tdm.list[[item]]$lda$space, function(x) mean(apply(posterior(x)$topics,1, function(z) - sum(z * log(z)))))
+    
+    temp <- list(entropy <- lda.entropy)
+    
+    input_list[[item]]$lda$entropy <- append(input_list[[item]]$lda$entropy, temp)
+    
+  }
+  
+  return(input_list)
+  
+}
+```
+
+## calculate the lda entropy
+```{r}
+tdm.list <- get_lda_entropy(tdm.list)
+
+# # Higher values indicate that the topic distributions are more evenly spread over the topics.
+# colnames(lda.results.entropy) <- c("tf_tfidf_entropy","tf_rst_entropy","tfidf_tfidf_entropy","tfidf_rst_entropy")
+
+# # select the lda-Method manually
+# lda.topic.entropy.selector <- c("VEM_fixed")
+# 
+# # UC.06 Informationen visualisieren
+# mean_value <- apply(lda.results.entropy, 1, FUN = mean)
+# lda.results.entropy <- cbind(lda.results.entropy, mean_value)
+# lda.results.entropy
+
+```
+
+## select the lda method manually
+```{r}
+lda.topic.entropy.selector = "Gibbs"
+
+most.frequent.topic.cont <- 5
+
+# most.frequent.term.cnt <- cluster.cnt.overall
+```
+
+
+## function to determine the lda topics and terms
+```{r}
+get_lda_details <- function(input_list){
+  
+  for (item in 1:length(tdm.list)) {
+    
+    lda.topics <- topics(input_list[[item]]$lda$space[[lda.topic.entropy.selector]],1)
+    lda.terms <- topicmodels::terms(input_list[[item]]$lda$space[[lda.topic.entropy.selector]],most.frequent.topic.cont)
+    
+    temp.topics <-list(topics = lda.topics)
+    temp.terms <-list(terms = lda.terms)
+    
+    input_list[[item]]$lda$topics <- append(input_list[[item]]$lda$topics, temp.topics)
+    input_list[[item]]$lda$terms <- append(input_list[[item]]$lda$terms, temp.terms)
+        
+  }
+  
+  return(input_list)
+  
+}
+```
+
+## determine the lda topics and terms
+```{r}
+tdm.list <- get_lda_details(tdm.list)
+```
+
+## do unsupervised clustering for all methods
+```{r}
+tdm.list <- do.cosine(tdm.list)
+tdm.list <- do.kmeans_pam(tdm.list)
+tdm.list <- do.lsa_kmeans(tdm.list)
+tdm.list <- do.lsa_cosine(tdm.list)
+tdm.list <- do.lda_cluster(tdm.list)
+```
+
+## function to retrieve all ggplots from cluster processing
+```{r}
+get_cluster_ggplot <- function(input_list){
+  result_list <- list(tf_tfidf = NA, tf_rst = NA, tfidf_tfidf = NA, tfidf_rst = NA)
+  
+  for (item in 1:length(input_list)) {
+    ggplot.cosine <- input_list[[item]]$cosine$ggplot
+    ggplot.kmeans <- input_list[[item]]$kmeans$ggplot
+    ggplot.kmedoids <- input_list[[item]]$kmeans$ggplot
+    ggplot.lsa_cosine <- input_list[[item]]$lsa_cosine$ggplot
+    ggplot.lsa_kmeans <- input_list[[item]]$lsa_kmeans$ggplot
+    ggplot.lda_kmeans <- input_list[[item]]$lda_kmeans$ggplot
+    
+    temp <- list(cosine = ggplot.cosine, kmeans = ggplot.kmeans, kmedoids = ggplot.kmedoids, lsa_cosine = ggplot.lsa_cosine, lsa_kmeans = ggplot.lsa_kmeans, lda_kmeans = ggplot.lda_kmeans)
+   result_list[[item]] <- append(result_list[[item]], temp)
+  }
+  return(result_list)
+}
+```
+
+## display all ggplots from clustering
+```{r, fig.height=20, fig.width=20}
+ggplot_list <- get_cluster_ggplot(tdm.list)
+ggplot_list
+```
+
+## function to retrieve all tables from cluster processing
+```{r}
+get_cluster_tbl <- function(input_list) {
+
+name_id <- c("tf_tfidf","tf_rst","tfidf_tfidf","tfidf_rst")
+
+result_list <- list(tf_tfidf = NA, tf_rst = NA, tfidf_tfidf = NA, tfidf_rst = NA)
+
+for (item in 1:length(tdm.list)) {
+  
+  cosine_clus <- as.data.frame(tdm.list[[item]]$cosine$hclust.alloc)
+  cosine_clus <- subset(cosine_clus, select = "cluster_number")
+  cosine_clus <- cosine_clus[row.names(cosine_clus) != entry.removed,]
+  # colnames(cosine_clus) <- c(paste(name_id[item],"_cos", sep = ""))
+  
+  kmeans_clus <- data.frame(tdm.list[[item]]$kmeans$result$cluster)
+  colnames(kmeans_clus) <- c("kmeans_clus")
+  kmeans_clus <- kmeans_clus[row.names(kmeans_clus) != entry.removed,]
+  # colnames(kmeans_clus) <- paste(name_id[item],"_kmea")
+  
+  kmedoids_clus <- data.frame(tdm.list[[item]]$kmedoids$result$cluster)
+  colnames(kmedoids_clus) <- c("kmedoids_clus")
+  kmedoids_clus <- kmedoids_clus[row.names(kmedoids_clus) != entry.removed,, drop = F]
+  # colnames(kmedoids_clus) <- paste(name_id[item],"_kmed")
+  
+  lsa_cosine_clus <- as.data.frame(tdm.list[[item]]$lsa_cosine$hclust.alloc, drop = F)
+  lsa_cosine_clus <- subset(lsa_cosine_clus, select = "cluster_number")
+  lsa_cosine_clus <- lsa_cosine_clus[row.names(lsa_cosine_clus) != entry.removed,]
+  # colnames(lsa_cosine_clus) <- paste(name_id[item],"_lsa_cos")
+
+  lsa_kmeans_clus <- as.data.frame(tdm.list[[item]]$lsa_kmeans$result$cluster, drop = F)
+  colnames(lsa_kmeans_clus) <- c("cluster_number")
+  lsa_kmeans_clus <- lsa_kmeans_clus[order(row.names(lsa_kmeans_clus)),,drop = F]
+  lsa_kmeans_clus <- lsa_kmeans_clus[row.names(lsa_kmeans_clus) != entry.removed,]
+  # colnames(lsa_kmeans_clus) <- paste(name_id[item],"_lsa_kmea")
+
+  lda_topic_clus <- as.data.frame(tdm.list[[item]]$lda_topic$clus[,"lda_topic_cluster", drop = F])
+  colnames(lda_topic_clus) <- c("cluster_number")
+  lda_topic_clus <- lda_topic_clus[row.names(lda_topic_clus) != entry.removed,]
+  # colnames(lda_topic_clus) <- paste(name_id[item],"_lda_top")
+  
+  lda_kmeans_clus <- as.data.frame(tdm.list[[item]]$lda_kmeans$clus[,"lda_kmeans_cluster", drop = F])
+  colnames(lda_kmeans_clus) <- c("cluster_number")
+  lda_kmeans_clus <- lda_kmeans_clus[row.names(lda_kmeans_clus) != entry.removed,]
+  # colnames(lda_kmeans_clus) <- paste(name_id[item],"_lda_kmea")
+  
+  result_list[[item]] <- cbind(cosine_clus,kmeans_clus,kmedoids_clus,lsa_cosine_clus,lsa_kmeans_clus, lda_topic_clus, lda_kmeans_clus)
+
+}
+
+result_df <- cbind(result_list$tf_tfidf, result_list$tf_rst, result_list$tfidf_tfidf, result_list$tfidf_rst)
+
+return(result_df)
+
+}
+```
+
+
+# UC.05 Ergebnisse der Zusammenhangs-Analyse evaluieren
+## definitions area
+
+## data preparation
+```{r}
+entry.removed <- tdm.list$tf_tfidf$doc$removed
+
+cluster_results <- get_cluster_tbl(tdm.list)
+colnames(cluster_results) <- c("tf_tfidf_cos","tf_tfidf_kmea","tf_tfidf_kmed","tf_tfidf_lsa_cos","tf_tfidf_lsa_kmea","tf_tfidf_lda_top","tf_tfidf_lda_kmea","tf_rst_cos","tf_rst_kmea","tf_rst_kmed","tf_rst_lsa_cos","tf_rst_lsa_kmea","tf_rst_lda_top","tf_rst_lda_kmea","tfidf_tfidf_cos","tfidf_tfidf_kmea","tfidf_tfidf_kmed","tfidf_tfidf_lsa_cos","tfidf_tfidf_lsa_kmea","tfidf_tfidf_lda_top","tfidf_tfidf_lda_kmea","tfidf_rst_cos","tfidf_rst_kmea","tfidf_rst_kmed","tfidf_rst_lsa_cos","tfidf_rst_lsa_kmea","tfidf_rst_lda_top","tfidf_rst_lda_kmea")
+#cluster.alloc.df.combined.stored <- cluster.alloc.df.combined
+cluster.alloc.df.combined <- cluster_results
+
+cluster_results <- cbind(cluster_results[,c(1,5,9,13,17,21,25)],cluster_results[,c(2,6,10,14,18,22,26)],cluster_results[,c(3,7,11,15,19,23,27)],cluster_results[,c(4,8,12,16,20,24,28)])
+
+```
+
+## The Rand index
+### index calculation
+```{r}
+# calculate the rand index for cluster allocations
+
+cluster.alloc.df.combined.rand <- data.frame()
+# first <- character()
+
+for (item1 in 1:ncol(cluster.alloc.df.combined)) { for (item2 in 1:ncol(cluster.alloc.df.combined)) { cluster.alloc.df.combined.rand[item1,item2] <- rand.index(cluster.alloc.df.combined[,item1],cluster.alloc.df.combined[,item2])}}
+
+colnames(cluster.alloc.df.combined.rand) <- c("cos_tf_tfidf","cos_tf_rst","cos_tfidf_tfidf","cos_tfidf_rst","kmea_tf_tfidf","kmea_tf_rst","kmea_tfidf_tfidf","kmea_tfidf_rst","kmed_tf_tfidf","kmed_tf_rst","kmed_tfidf_tfidf","kmed_tfidf_rst","lsa_kmea_tf_tfidf","lsa_kmea_tf_rst","lsa_kmea_tfidf_tfidf","lsa_kmea_tfidf_rst","lsa_cos_tf_tfidf","lsa_cos_tf_rst","lsa_cos_tfidf_tfidf","lsa_cos_tfidf_rst","lda_topic_tf_tfidf","lda_topic_tf_rst","lda_topic_tfidf_tfidf","lda_topic_tfidf_rst","lda_kmea_tf_tfidf","lda_kmea_tf_rst","lda_kmea_tfidf_tfidf","lda_kmea_tfidf_rst")
+
+#
+rownames(cluster.alloc.df.combined.rand) <- c("cos_tf_tfidf","cos_tf_rst","cos_tfidf_tfidf","cos_tfidf_rst","kmea_tf_tfidf","kmea_tf_rst","kmea_tfidf_tfidf","kmea_tfidf_rst","kmed_tf_tfidf","kmed_tf_rst","kmed_tfidf_tfidf","kmed_tfidf_rst","lsa_kmea_tf_tfidf","lsa_kmea_tf_rst","lsa_kmea_tfidf_tfidf","lsa_kmea_tfidf_rst","lsa_cos_tf_tfidf","lsa_cos_tf_rst","lsa_cos_tfidf_tfidf","lsa_cos_tfidf_rst","lda_topic_tf_tfidf","lda_topic_tf_rst","lda_topic_tfidf_tfidf","lda_topic_tfidf_rst","lda_kmea_tf_tfidf","lda_kmea_tf_rst","lda_kmea_tfidf_tfidf","lda_kmea_tfidf_rst")
+
+```
+
+```{r}
+# calculate the rand index for cluster allocations
+
+cluster.alloc.df.combined.rand.temp <- data.frame()
+df <- cluster.alloc.df.combined[,c(4,8,12,16,20,24,28)]
+# first <- character()
+
+for (item1 in 1:ncol(df)) { for (item2 in 1:ncol(df)) { cluster.alloc.df.combined.rand.temp[item1,item2] <- rand.index(df[,item1],df[,item2])}}
+
+colnames(cluster.alloc.df.combined.rand.temp) <- c("cos_tfidf_rst","kmea_tfidf_rst","kmed_tfidf_rst","lsa_kmea_tfidf_rst","lsa_cos_tfidf_rst","lda_topic_tfidf_rst","lda_kmea_tfidf_rst")
+
+# 
+rownames(cluster.alloc.df.combined.rand.temp) <- c("cos_tfidf_rst","kmea_tfidf_rst","kmed_tfidf_rst","lsa_kmea_tfidf_rst","lsa_cos_tfidf_rst","lda_topic_tfidf_rst","lda_kmea_tfidf_rst")
+```
+
+### visualize the rand indices
+```{r, fig.height=12, fig.width=12}
+# UC.06 Informationen visualisieren
+# http://www.sthda.com/english/wiki/correlation-matrix-a-quick-start-guide-to-analyze-format-and-visualize-a-correlation-matrix-using-r-software
+
+# for cluster.alloc.df.combined.rand.data
+
+cluster.alloc.df.combined.rand.data <- round(cluster.alloc.df.combined.rand,2)
+
+cluster.alloc.df.combined.rand.ggcorplot <- ggcorrplot(cluster.alloc.df.combined.rand.data, method = "circle") +ggtitle("Evaluation of cluster allocations", subtitle = paste("Correlation plot; RAND index; complete data; k =", cluster.cnt.overall))
+
+cluster.alloc.df.combined.rand.ggcorplot
+
+# UC.07 Informationen austauschen
+ggsave(file = paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/pics/cluster.alloc.df.combined.rand.ggcorplot_",cv,cc,".png", sep = ""), dpi = 300, plot = cluster.alloc.df.combined.rand.ggcorplot, limitsize = F)
+
+# uc05_xlsx_list <- append(uc05_xlsx_list, list(rand = cluster.alloc.df.combined.rand.data))
+# uc07_data(cluster.alloc.df.combined.rand.data,"xlsx")
+# write.xlsx(cluster.alloc.df.combined.rand.data, paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/cluster.alloc.df.combined.rand.data_",cv,cc,".xlsx", sep=""))
+
+```
+
+### calculate a subset of rand indices
+```{r, fig.height=6, fig.width=6}
+cluster.alloc.df.combined.rand.temp.data <- round(cluster.alloc.df.combined.rand.temp,2)
+
+cluster.alloc.df.combined.rand.temp.ggcorplot <- ggcorrplot(cluster.alloc.df.combined.rand.temp.data, lab = T) +ggtitle("Evaluation of cluster allocations", subtitle = paste("Correlation plot; RAND index; complete data; k =", cluster.cnt.overall))
+
+cluster.alloc.df.combined.rand.temp.ggcorplot
+
+# UC.07 Informationen austauschen
+ggsave(file = paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/pics/cluster.alloc.df.combined.rand.temp.ggcorplot_",cv,cc,".png", sep = ""), dpi = 300, plot = cluster.alloc.df.combined.rand.temp.ggcorplot, limitsize = F)
+
+# uc07_data(cluster.alloc.df.combined.rand.temp.data,"xlsx")
+# write.xlsx(cluster.alloc.df.combined.rand.temp.data, paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/cluster.alloc.df.combined.rand.temp.data_",cv,cc,".xlsx", sep=""))
+
+```
+
+## The Calinski-Harabasz Index, The Davies-Boulding index, The Silhouette Index
+### function section
+```{r}
+# function to visualize and share the silhouette coefficient results w/ distance matrix
+# UC.06 and UC.07
+clus_silh_ggplot <- function(clus.alloc.obj, dist.matrix, subtitle, filename) { 
+  clus_silh_ggplot <- fviz_silhouette(sil.obj = silhouette(clus.alloc.obj, dist.matrix, palette ="jco", ggtheme = theme_classic()))
+  clus_silh_ggplot <- clus_silh_ggplot +ggtitle("Evaluation of cluster allocations", subtitle = paste(subtitle,"\nAverage silhouette width:", round(mean(clus_silh_ggplot$data$sil_width),2)))
+  # ggsave(file = paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/pics/",filename,cv,cc,".png", sep = ""), plot = clus_silh_ggplot, dpi = 300)
+  return(clus_silh_ggplot) 
+}
+
+# function to visualize and share the silhouette coefficient results w/o distance matrix
+# UC.06 and UC.07
+clus_silh_ggplot_pam <- function(clus.alloc.obj, subtitle, filename) { 
+  clus_silh_ggplot_pam <- fviz_silhouette(clus.alloc.obj, palette ="jco", ggtheme = theme_classic())
+  clus_silh_ggplot_pam <- clus_silh_ggplot_pam +ggtitle("Evaluation of cluster allocations", subtitle = paste(subtitle,"\nAverage silhouette width:", round(mean(clus_silh_ggplot_pam$data$sil_width),2)))
+  # ggsave(file = paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/pics/",filename,cv,cc,".png", sep = ""), plot = clus_silh_ggplot, dpi = 300)
+  return(clus_silh_ggplot_pam) 
+}
+```
+
+### function to calculate all three indices
+```{r}
+get_indices <- function(input_list){
+  
+  for (item in 1:length(input_list)) {
+  
+    # cosine
+  cosine.dbi <- index.DB(input_list[[item]]$cosine$dist, input_list[[item]]$cosine$hclust.alloc$cluster_number, centrotypes = "centroids")
+  
+  cosine.chi <- calinhara(input_list[[item]]$cosine$dist, input_list[[item]]$cosine$hclust.alloc$cluster_number)
+  
+  cosine.silh <- clus_silh_ggplot(input_list[[item]]$cosine$hclust.alloc$cluster_number, input_list[[item]]$cosine$dist, paste("Cluster silhouette plot; Silhouette coefficient; ", input_list[[item]]$name, "; cosine; k = ",cluster.cnt.overall, sep = ""), paste(input_list[[item]]$name,".cosine.silh_ggplot_", sep = ""))
+
+  
+  # kmeans
+  kmeans.dbi <- index.DB(t(input_list[[item]]$matrix), input_list[[item]]$kmeans$result$cluster, d = NULL, centrotypes = "centroids")
+  
+  kmeans.chi <- calinhara(t(input_list[[item]]$matrix), input_list[[item]]$kmeans$result$cluster)
+  
+  kmeans.silh <- clus_silh_ggplot(input_list[[item]]$kmeans$result$cluster, dist(t(input_list[[item]]$matrix))^2, paste("Cluster silhouette plot; Silhouette coefficient; ", input_list[[item]]$name, "; kmeans; k = ",cluster.cnt.overall, sep = ""), paste(input_list[[item]]$name,".kmeans.silh_ggplot_", sep = ""))
+  
+  
+  # kmedoids
+  kmedoids.dbi <- index.DB(t(input_list[[item]]$matrix), input_list[[item]]$kmedoids$result$clustering, d = dist(t(input_list[[item]]$matrix)), centrotypes = "medoids")
+  
+  kmedoids.chi <- calinhara(t(input_list[[item]]$matrix), input_list[[item]]$kmedoids$result$clustering)
+  
+  kmedoids.silh <- clus_silh_ggplot_pam(tdm.list[[item]]$kmedoids$result,paste("Cluster silhouette plot; Silhouette coefficient; ", input_list[[item]]$name, "; kmedoids; k = ",cluster.cnt.overall, sep = ""), paste(input_list[[item]]$name,".kmedoids.silh_ggplot_", sep = ""))
+  
+  
+  # lsa kmeans
+  lsa.kmeans.dbi <- index.DB(input_list[[item]]$lsa$space$dk, input_list[[item]]$lsa_kmeans$result$cluster, d = NULL, centrotypes = "centroids")
+  
+  lsa.kmeans.chi <- calinhara(input_list[[item]]$lsa$space$dk, input_list[[item]]$lsa_kmeans$result$cluster)
+  
+  lsa.kmeans.silh <- clus_silh_ggplot(input_list[[item]]$lsa_kmeans$result$cluster, dist(input_list[[item]]$lsa$space$dk)^2, paste("Cluster silhouette plot; Silhouette coefficient; ", input_list[[item]]$name, "; lsa; kmeans; k = ",cluster.cnt.overall, sep = ""), paste(input_list[[item]]$name,".lsa.kmeans.silh_ggplot_", sep = ""))
+  
+  
+  # lsa cosine
+  lsa.cosine.dbi <- index.DB(input_list[[item]]$lsa_cosine$dist, input_list[[item]]$lsa_cosine$hclust.alloc$cluster_number, d = NULL, centrotypes = "centroids")
+  
+  lsa.cosine.chi <- cluster.stats(d = input_list[[item]]$lsa_cosine$dist, input_list[[item]]$lsa_cosine$hclust.alloc$cluster_number)
+  lsa.cosine.chi <- lsa.cosine.chi$ch
+  
+  lsa.cosine.silh <- clus_silh_ggplot(input_list[[item]]$lsa_cosine$hclust.alloc$cluster_number, input_list[[item]]$lsa_cosine$dist, paste("Cluster silhouette plot; Silhouette coefficient; ", input_list[[item]]$name, "; lsa; cosine; k = ",cluster.cnt.overall, sep = ""), paste(input_list[[item]]$name,".lsa.cosine.silh_ggplot_", sep = ""))
+  
+  
+  # lda topic
+  lda.topic.dbi <- index.DB(input_list[[item]]$lda$space[[lda.topic.entropy.selector]]@gamma, input_list[[item]]$lda_topic$clus$lda_topic_cluster, d = NULL, centrotypes = "centroids")
+  
+  lda.topic.chi <- calinhara(input_list[[item]]$lda$space[[lda.topic.entropy.selector]]@gamma, input_list[[item]]$lda_topic$clus$lda_topic_cluster)
+  
+  lda.topic.silh <- clus_silh_ggplot(input_list[[item]]$lda_topic$clus$lda_topic_cluster, dist(input_list[[item]]$lda$space[[lda.topic.entropy.selector]]@gamma), paste("Cluster silhouette plot; Silhouette coefficient; ", input_list[[item]]$name, "; lda; topics; k = ",cluster.cnt.overall, sep = ""), paste(input_list[[item]]$name,".lda.topics.silh_ggplot_", sep = ""))
+  
+  
+  # lda kmeans
+  lda.kmeans.dbi <- index.DB(input_list[[item]]$lda$space[[lda.topic.entropy.selector]]@gamma, input_list[[item]]$lda_kmeans$result$cluster, d = NULL, centrotypes = "centroids")
+  
+  lda.kmeans.chi <- calinhara(input_list[[item]]$lda$space[[lda.topic.entropy.selector]]@gamma, input_list[[item]]$lda_kmeans$result$cluster)
+  
+  lda.kmeans.silh <- clus_silh_ggplot(input_list[[item]]$lda_kmeans$result$cluster, dist(input_list[[item]]$lda$space[[lda.topic.entropy.selector]]@gamma)^2, paste("Cluster silhouette plot; Silhouette coefficient; ", input_list[[item]]$name, "; lda; kmeans; k = ",cluster.cnt.overall, sep = ""), paste(input_list[[item]]$name,".lda.kmeans.silh_ggplot_", sep = ""))
+  
+  
+  temp.dbi <- list(cosine = cosine.dbi, kmeans = kmeans.dbi, kmedoids = kmedoids.dbi, lsa_kmeans = lsa.kmeans.dbi, lsa_cosine = lsa.cosine.dbi, lda_topic = lda.topic.dbi, lda_kmeans = lda.kmeans.dbi)
+  
+  temp.chi <- list(cosine = cosine.chi, kmeans = kmeans.chi, kmedoids = kmedoids.chi, lsa_kmeans = lsa.kmeans.chi, lsa_cosine = lsa.cosine.chi, lda_topic = lda.topic.chi, lda_kmeans = lda.kmeans.chi)
+
+  temp.silh <- list(cosine = cosine.silh, kmeans = kmeans.silh, kmedoids = kmedoids.silh, lsa_kmeans = lsa.kmeans.silh, lsa_cosine = lsa.cosine.silh, lda_topic = lda.topic.silh, lda_kmeans = lda.kmeans.silh)  
+  
+  
+  input_list[[item]]$dbi <- append(input_list[[item]]$dbi, temp.dbi)
+  
+  input_list[[item]]$chi <- append(input_list[[item]]$chi, temp.chi)  
+  
+  input_list[[item]]$silh <- append(input_list[[item]]$silh, temp.silh)  
+  
+  }
+  
+  return(input_list)
+  
+}
+```
+
+### calulate all three indices
+```{r}
+tdm.list <- get_indices(tdm.list)
+```
+
+### retrieve the results
+```{r}
+get_indices_tbl <- function(input_list){
+  
+  dbi <- data.frame()
+  chi <- data.frame()
+  silh <- data.frame()
+  
+  for (tdm_item in 1:length(input_list)) {
+    
+    for (algo_item in 1:length(input_list[[tdm_item]]$dbi)) {
+      
+      dbi <- c(dbi, round(as.numeric(input_list[[tdm_item]]$dbi[[algo_item]]$DB),2))
+      
+    }
+    
+    for (algo_item in 1:length(input_list[[tdm_item]]$chi)) {
+      
+      chi <- c(chi, round(as.numeric(input_list[[tdm_item]]$chi[[algo_item]]),2))
+      
+    }
+    
+    for (algo_item in 1:length(input_list[[tdm_item]]$silh)) {
+      
+      silh <- c(silh, round(mean(input_list[[tdm_item]]$silh[[algo_item]]$data$sil_width),digits=2))
+      
+    }
+    
+  }
+  
+  df <- cbind(dbi,chi,silh)
+  colnames(df) <- c("dbi","chi","silh")
+  
+  outer_names <- c("tf_tfidf_","tf_rst_","tfidf_tfidf_","tfidf_rst_")
+  inner_names <- c("cos","kmea","kmed","lsa_kmea","lsa_cos","lda_top","lda_kmea")
+  rn <- c()
+  
+  for (outer_idx in 1:4) {
+    
+    for (inner_idx in 1:7) {
+      
+      rn <- c(rn,paste(outer_names[outer_idx],inner_names[inner_idx],sep = ""))
+      
+    }
+    
+  }
+  
+  row.names(df) <- rn
+  
+  
+  return(df)
+  
+}
+
+```
+
+### build a dataframe for all results
+```{r}
+df <- get_indices_tbl(tdm.list)
+df <- t(df)
+
+tf_tfidf_indices <- df[,1:7]
+tf_tfidf_indices
+
+tf_rst_indices <- df[,8:14]
+tf_rst_indices
+
+
+tfidf_tfidf_indices <- df[,15:21]
+tfidf_tfidf_indices
+
+tfidf_rst_indices <- df[,22:28]
+tfidf_rst_indices
+
+```
+
+```{r}
+# dbi
+dbi_values <- df[1,]
+dbi_values <- unlist(dbi_values, use.names = T)
+dbi_values <- as.data.frame(dbi_values)
+dbi_values <- dbi_values[order(row.names(dbi_values)),,drop=F]
+dbi_values
+
+dbi_tf_rst <- dbi_values[1:7,,drop=F]
+dbi_tf_rst
+
+dbi_tf_tfidf <- dbi_values[8:14,,drop=F]
+dbi_tf_tfidf
+
+dbi_tfidf_rst <- dbi_values[15:21,,drop=F]
+dbi_tfidf_rst
+
+dbi_tfidf_tfidf <- dbi_values[22:28,,drop=F]
+dbi_tfidf_tfidf
+
+
+# chi
+chi_values <- df[2,]
+chi_values <- unlist(chi_values, use.names = T)
+chi_values <- as.data.frame(chi_values)
+chi_values <- chi_values[order(row.names(chi_values)),,drop=F]
+chi_values
+
+chi_tf_rst <- chi_values[1:7,,drop=F]
+chi_tf_rst
+
+chi_tf_tfidf <- chi_values[8:14,,drop=F]
+chi_tf_tfidf
+
+chi_tfidf_rst <- chi_values[15:21,,drop=F]
+chi_tfidf_rst
+
+chi_tfidf_tfidf <- chi_values[22:28,,drop=F]
+chi_tfidf_tfidf
+
+
+#silh
+silh_values <- df[3,]
+silh_values <- unlist(silh_values, use.names = T)
+silh_values <- as.data.frame(silh_values)
+silh_values <- silh_values[order(row.names(silh_values)),,drop=F]
+silh_values
+
+silh_tf_rst <- silh_values[1:7,,drop=F]
+silh_tf_rst
+
+silh_tf_tfidf <- silh_values[8:14,,drop=F]
+silh_tf_tfidf
+
+silh_tfidf_rst <- silh_values[15:21,,drop=F]
+silh_tfidf_rst
+
+silh_tfidf_tfidf <- silh_values[22:28,,drop=F]
+silh_tfidf_tfidf
+
+```
+
+### store all results local
+```{r}
+wb_indices = openxlsx::createWorkbook()
+openxlsx::addWorksheet(wb = wb_indices, sheetName = "indices")
+
+openxlsx::addWorksheet(wb_indices, sheetName = "rand_values")
+openxlsx::addWorksheet(wb_indices, "rand_tmp_values")
+openxlsx::addWorksheet(wb_indices, "dbi_values")
+openxlsx::addWorksheet(wb_indices, "chi_values")
+openxlsx::addWorksheet(wb_indices, "silh_values")
+
+openxlsx::addWorksheet(wb_indices, "dbi_tf_rst")
+openxlsx::addWorksheet(wb_indices, "dbi_tf_tfidf")
+openxlsx::addWorksheet(wb_indices, "dbi_tfidf_rst")
+openxlsx::addWorksheet(wb_indices, "dbi_tfidf_tfidf")
+
+openxlsx::addWorksheet(wb_indices, "chi_tf_rst")
+openxlsx::addWorksheet(wb_indices, "chi_tf_tfidf")
+openxlsx::addWorksheet(wb_indices, "chi_tfidf_rst")
+openxlsx::addWorksheet(wb_indices, "chi_tfidf_tfidf")
+
+openxlsx::addWorksheet(wb_indices, "silh_tf_rst")
+openxlsx::addWorksheet(wb_indices, "silh_tf_tfidf")
+openxlsx::addWorksheet(wb_indices, "silh_tfidf_rst")
+openxlsx::addWorksheet(wb_indices, "silh_tfidf_tfidf")
+
+openxlsx::writeData(wb_indices,1, df)
+
+openxlsx::writeData(wb_indices,2, cluster.alloc.df.combined.rand.data, rowNames =T)
+openxlsx::writeData(wb_indices,3, cluster.alloc.df.combined.rand.temp.data, rowNames = T)
+
+openxlsx::writeData(wb_indices,4, dbi_values, rowNames =T)
+openxlsx::writeData(wb_indices,5, chi_values, rowNames = T)
+openxlsx::writeData(wb_indices,6, silh_values, rowNames = T)
+
+openxlsx::writeData(wb_indices,7, dbi_tf_rst, rowNames = T)
+openxlsx::writeData(wb_indices,8, dbi_tf_tfidf, rowNames = T)
+openxlsx::writeData(wb_indices,9, dbi_tfidf_rst, rowNames = T)
+openxlsx::writeData(wb_indices,10, dbi_tfidf_tfidf, rowNames = T)
+
+openxlsx::writeData(wb_indices,11, chi_tf_rst, rowNames = T)
+openxlsx::writeData(wb_indices,12, chi_tf_tfidf, rowNames = T)
+openxlsx::writeData(wb_indices,13, chi_tfidf_rst, rowNames = T)
+openxlsx::writeData(wb_indices,14, chi_tfidf_tfidf, rowNames = T)
+
+openxlsx::writeData(wb_indices,15, silh_tf_rst, rowNames = T)
+openxlsx::writeData(wb_indices,16, silh_tf_tfidf, rowNames = T)
+openxlsx::writeData(wb_indices,17, silh_tfidf_rst, rowNames = T)
+openxlsx::writeData(wb_indices,18, silh_tfidf_tfidf, rowNames = T)
+
+openxlsx::saveWorkbook(wb_indices, file = "~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/wb_indices.xlsx", overwrite = T)
+```
+
+
+
+#### function to retrieve all ggplots from cluster processing
+```{r}
+get_silhouette_ggplot <- function(input_list){
+  
+  result_list <- list(tf_tfidf = NA, tf_rst = NA, tfidf_tfidf = NA, tfidf_rst = NA)
+  
+  for (item in 1:length(input_list)) {
+    
+    ggplot.cosine <- input_list[[item]]$silh$cosine
+    ggsave(file = paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/pics/",input_list[[item]]$name,".cos.silh.ggplot_",cv,cc,".png", sep = ""), plot = ggplot.cosine, dpi = 300)
+    
+    ggplot.kmeans <- input_list[[item]]$silh$kmeans
+    ggsave(file = paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/pics/",input_list[[item]]$name,".kmea.silh.ggplot_",cv,cc,".png", sep = ""), plot = ggplot.kmeans, dpi = 300)
+    
+    ggplot.kmedoids <- input_list[[item]]$silh$kmedoids
+    ggsave(file = paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/pics/",input_list[[item]]$name,".kmed.silh.ggplot_",cv,cc,".png", sep = ""), plot = ggplot.kmedoids, dpi = 300)
+    
+    ggplot.lsa_cosine <- input_list[[item]]$silh$lsa_cosine
+    ggsave(file = paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/pics/",input_list[[item]]$name,".lsa_cos.silh.ggplot_",cv,cc,".png", sep = ""), plot = ggplot.lsa_cosine, dpi = 300)
+    
+    ggplot.lsa_kmeans <- input_list[[item]]$silh$lsa_kmeans
+    ggsave(file = paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/pics/",input_list[[item]]$name,".lsa_kmea.silh.ggplot_",cv,cc,".png", sep = ""), plot = ggplot.lsa_kmeans, dpi = 300)
+    
+    ggplot.lda_topic <- input_list[[item]]$silh$lda_topic
+    ggsave(file = paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/pics/",input_list[[item]]$name,".lda_topic.silh.ggplot_",cv,cc,".png", sep = ""), plot = ggplot.lda_topic, dpi = 300)
+    
+    ggplot.lda_kmeans <- input_list[[item]]$silh$lda_kmeans
+    ggsave(file = paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/pics/",input_list[[item]]$name,".lda_kmea.silh.ggplot_",cv,cc,".png", sep = ""), plot = ggplot.lda_kmeans, dpi = 300)    
+    
+    temp <- list(cosine = ggplot.cosine, kmeans = ggplot.kmeans, kmedoids = ggplot.kmedoids, lsa_cosine = ggplot.lsa_cosine, lsa_kmeans = ggplot.lsa_kmeans, lda_topic = ggplot.lda_topic, lda_kmeans = ggplot.lda_kmeans)
+   result_list[[item]] <- append(result_list[[item]], temp)
+  }
+  return(result_list)
+}
+```
+
+### display all silhouette ggplots
+```{r, fig.width=20, fig.height = 20}
+get_all_silhouette_ggplot <- get_silhouette_ggplot(tdm.list)
+get_all_silhouette_ggplot
+```
