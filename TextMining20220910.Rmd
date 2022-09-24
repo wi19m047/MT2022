@@ -182,7 +182,7 @@ extract.values.from.capture.output <- function(capture.output.obj) {
 ```{r}
 # load certain metadata from a file
 # UC.07 Informationen austauschen
-rawdata <- read.csv(file = "~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/corpus.eval.values.v2.csv", sep = ";")
+rawdata <- read.csv(file = "~/data/corpus.eval.values.v2.csv", sep = ";")
 eval.df <- data.frame(rawdata, row.names = "id")
 
 ```
@@ -220,8 +220,8 @@ cv <- 1
 # UC.01 Dokumente-Korpus anlegen
 ## import all documents from of an input directory and built a document vcorpus 
 ```{r}
-# path to icloud
-file.path <- file.path("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/docs")
+# GitHub repository
+file.path <- file.path("~/MT2022/docs")
 corpus.raw.file <- VCorpus(DirSource(file.path), readerControl = list(reader = readPDF, language = "en"))
 corpus.raw.file.doc.cnt <- as.numeric(strsplit(capture.output(corpus.raw.file)[[3]],":")[[1]][3])
 paste("Der Korpus (corpus.raw.file) enthält",corpus.raw.file.doc.cnt,"Dokumente.")
