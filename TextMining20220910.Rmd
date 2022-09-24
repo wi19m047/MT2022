@@ -182,7 +182,7 @@ extract.values.from.capture.output <- function(capture.output.obj) {
 ```{r}
 # load certain metadata from a file
 # UC.07 Informationen austauschen
-rawdata <- read.csv(file = "~/data/corpus.eval.values.v2.csv", sep = ";")
+rawdata <- read.csv(file = "~/MT2022/data/corpus.eval.values.v2.csv", sep = ";")
 eval.df <- data.frame(rawdata, row.names = "id")
 
 ```
@@ -335,7 +335,7 @@ paste("Der Korpus (corpus) besteht aus",corpus.doc.cnt,"Dokumenten.")
 df <- corpus.idx.df()
 
 # UC.07 Informationen austauschen
-write.xlsx(df, paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/corpus.idx.cv",cv,".xlsx", sep=""))
+write.xlsx(df, paste("~/MT2022/data/corpus.idx.cv",cv,".xlsx", sep=""))
 ```
 
 ## enrich the corpus with external metadata
@@ -405,7 +405,7 @@ for (item in 1:length(corpus)) {
 colnames(df) <- c("Author","Date","Description","Heading","ID","Language","Origin","Quality","Relevance","State-Aid-No.","Subject","Date","MemberState","MemberRegion","Decision-No.")
 
 # UC.07 Informationen austauschen
-write.xlsx(df, paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/corpus.info.cv",cv,".xlsx", sep=""))
+write.xlsx(df, paste("~/MT2022/data/corpus.info.cv",cv,".xlsx", sep=""))
 ```
 
 ## investigate the corpus
@@ -439,14 +439,14 @@ uc07_data <- function(data_object,type,version = T) {
   }
   
   if (type == "xlsx") {
-    write.xlsx(data_object, paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/",file_name,"_",id,".xlsx", sep=""))
+    write.xlsx(data_object, paste("~/MT2022/data/",file_name,"_",id,".xlsx", sep=""))
     # print(paste(type,id))
   }
    else if (type == "csv") {
-   write.csv(data_object, paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/",file_name,"_",id,".csv", sep=""))
+   write.csv(data_object, paste("~/MT2022/data/",file_name,"_",id,".csv", sep=""))
     # print(paste(type,id))
 } else if (type == "tbl") {
-   write.table(data_object,paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/",file_name,"_",id,".csv", sep=""))
+   write.table(data_object,paste("~/MT2022/data/",file_name,"_",id,".csv", sep=""))
   # print(paste(type,id))
 } else {
   print("false date provided, nothing saved locally!")
@@ -642,7 +642,7 @@ tdm.tf.sparsity.value.eval.ggplot <- ggplot(data = tdm.tf.sparsity.value.eval, a
 tdm.tf.sparsity.value.eval.ggplot
 
 # UC.07 Informationen austauschen
-ggsave(paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/pics/tdm.tf.sparsity.value.eval.ggplot_",cv,".png", sep=""), plot = tdm.tf.sparsity.value.eval.ggplot)
+ggsave(paste("~/MT2022/pics/tdm.tf.sparsity.value.eval.ggplot_",cv,".png", sep=""), plot = tdm.tf.sparsity.value.eval.ggplot)
 
 uc02_xlsx_list <- append(uc02_xlsx_list, list(tdm.tf.sparsity.value.eval = tdm.tf.sparsity.value.eval))
 uc07_data(tdm.tf.sparsity.value.eval,"xlsx",F)
@@ -695,7 +695,7 @@ tdm.tfidf.sparsity.value.eval.ggplot <- ggplot(data = tdm.tfidf.sparsity.value.e
 tdm.tfidf.sparsity.value.eval.ggplot
 
 # UC.07 Informationen austauschen
-ggsave(paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/pics/tdm.tfidf.sparsity.value.eval.ggplot_",cv,".png", sep = ""), plot = tdm.tfidf.sparsity.value.eval.ggplot)
+ggsave(paste("~/MT2022/pics/tdm.tfidf.sparsity.value.eval.ggplot_",cv,".png", sep = ""), plot = tdm.tfidf.sparsity.value.eval.ggplot)
 
 uc02_xlsx_list <- append(uc02_xlsx_list, list(tdm.tfidf.sparsity.value.eval = tdm.tfidf.sparsity.value.eval))
 uc07_data(tdm.tfidf.sparsity.value.eval,"xlsx",F)
@@ -852,7 +852,7 @@ ggplot.all <- ggplot(tdm.tf.matrix.sum.df[1:topN.feature.value,], aes(x=reorder(
 ggplot.all
 
 # UC.07 Informationen austauschen
-ggsave(file = paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/pics/tdm.tf.features.reducedby.tfidf.topn_",cv,".pdf", sep = ""), plot = ggplot.all, dpi = 300)
+ggsave(file = paste("~/MT2022/pics/tdm.tf.features.reducedby.tfidf.topn_",cv,".pdf", sep = ""), plot = ggplot.all, dpi = 300)
 ```
 
 ### wordcloud visualisation of the features for the tdm.tfidf.features.reducedby.tfidf
@@ -879,7 +879,7 @@ ggplot.all <- ggplot(tdm.tfidf.matrix.sum.df[1:topN.feature.value,], aes(x=reord
 ggplot.all
 
 # UC.07 Informationen austauschen
-ggsave(file = paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/pics/tdm.tfidf.features.reducedby.tfidf.topn_",cv,".pdf", sep = ""), plot = ggplot.all, dpi = 300)
+ggsave(file = paste("~/MT2022/pics/tdm.tfidf.features.reducedby.tfidf.topn_",cv,".pdf", sep = ""), plot = ggplot.all, dpi = 300)
 ```
 
 ### wordcloud visualisation of the features for the tdm.tf.features.reducedby.rst
@@ -899,7 +899,7 @@ wordcloud(df$word, df$freq, scale = c(3.0,0.2), random.order = F, rot.per = 0.35
 # specify the input data to be used
 tdm.tf.matrix.sum <- rowSums(tdm.tf.features.reducedby.rst.matrix)
 
-write.csv(tdm.tf.matrix.sum,file="~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/tdm.tf.matrix.sum.csv")
+write.csv(tdm.tf.matrix.sum,file="~/MT2022/data/tdm.tf.matrix.sum.csv")
 
 tdm.tf.matrix.sum.df <- data.frame(word=names(tdm.tf.matrix.sum),frequency=tdm.tf.matrix.sum)
 tdm.tf.matrix.sum.df <- tdm.tf.matrix.sum.df[order(tdm.tf.matrix.sum.df[,2], decreasing = T),]
@@ -914,7 +914,7 @@ ggplot.all <- ggplot(tdm.tf.matrix.sum.df[1:topN.feature.value,], aes(x=reorder(
 ggplot.all
 
 # UC.07 Informationen austauschen
-ggsave(file = paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/pics/tdm.tf.features.reducedby.rst.matrix.topn_",cv,".pdf", sep = ""), plot = ggplot.all, dpi = 300)
+ggsave(file = paste("~/MT2022/pics/tdm.tf.features.reducedby.rst.matrix.topn_",cv,".pdf", sep = ""), plot = ggplot.all, dpi = 300)
 ```
 ### wordcloud visualisation of the features for the tdm.tfidf.features.reducedby.rst
 ```{r}
@@ -946,7 +946,7 @@ ggplot.all <- ggplot(tdm.tfidf.matrix.sum.df[1:topN.feature.value,], aes(x=reord
 ggplot.all
 
 # UC.07 Informationen austauschen
-ggsave(file = paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/pics/tdm.tfidf.features.reducedby.rst.matrix.topn_",cv,".pdf", sep = ""), plot = ggplot.all, dpi = 300)
+ggsave(file = paste("~/MT2022/pics/tdm.tfidf.features.reducedby.rst.matrix.topn_",cv,".pdf", sep = ""), plot = ggplot.all, dpi = 300)
 ```
 ## save the data as xlsx files
 ```{r}
@@ -957,7 +957,7 @@ ggsave(file = paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace
 #   addDataFrame(as.data.frame(uc02_xlsx_list[[item]]), sheet = sheet)
 # }
 # 
-# saveWorkbook(uc02_wb,paste("~/Library/Mobile\ Documents/com~apple~CloudDocs/r-workspace/data/uc02_wb_",cv,".xlsx", sep=""))
+# saveWorkbook(uc02_wb,paste("~/MT2022/data/uc02_wb_",cv,".xlsx", sep=""))
 
 ```
 
